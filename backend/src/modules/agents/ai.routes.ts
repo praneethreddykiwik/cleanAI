@@ -195,7 +195,7 @@ aiRoutes.post('/chat', authMiddleware as any, async (req: AuthenticatedRequest, 
       return res.status(404).json({ success: false, message: 'Customer profile not found' });
     }
 
-    const { text, image, conversationId, serviceName } = req.body;
+    const { text, image, conversationId, serviceName, latitude, longitude } = req.body;
 
     const result = await AIOrchestrator.handleChatSession({
       userId,
@@ -204,6 +204,8 @@ aiRoutes.post('/chat', authMiddleware as any, async (req: AuthenticatedRequest, 
       image: image || null,
       conversationId: conversationId || null,
       serviceName,
+      latitude,
+      longitude,
     });
 
     res.status(200).json({

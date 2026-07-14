@@ -23,6 +23,8 @@ export class AIOrchestrator {
     image?: string | null;
     conversationId?: string | null;
     serviceName?: string;
+    latitude?: number;
+    longitude?: number;
   }): Promise<ChatSessionResponse> {
     // 1. Resolve or create AIConversation
     let conversationId = params.conversationId;
@@ -152,8 +154,8 @@ export class AIOrchestrator {
     // Default coordinates (Bengaluru Center)
     const matches = await AgentsService.matchBestVendors({
       serviceName: complexity.service,
-      latitude: 12.9716,
-      longitude: 77.5946,
+      latitude: params.latitude || 12.9716,
+      longitude: params.longitude || 77.5946,
       priceRange: { min: pricing.totalMin, max: pricing.totalMax },
     });
 

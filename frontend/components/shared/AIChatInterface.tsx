@@ -97,6 +97,8 @@ export function AIChatInterface({
           image: currentImage,
           conversationId,
           serviceName,
+          latitude,
+          longitude,
         }),
       });
 
@@ -302,20 +304,52 @@ export function AIChatInterface({
                           <span>Base Rate</span>
                           <span>{formatCurrency(msg.pricing.basePrice)}</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span>Severity Fee</span>
-                          <span>{formatCurrency(msg.pricing.severityFee)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Labor Cost</span>
-                          <span>{formatCurrency(msg.pricing.labourFee)}</span>
-                        </div>
+                        {msg.pricing.cityMultiplier !== 1 && (
+                          <div className="flex justify-between text-muted-foreground/90">
+                            <span>City Premium</span>
+                            <span>x{msg.pricing.cityMultiplier}</span>
+                          </div>
+                        )}
+                        {msg.pricing.demandMultiplier !== 1 && (
+                          <div className="flex justify-between text-amber-600 dark:text-amber-400">
+                            <span>Demand Surge</span>
+                            <span>x{msg.pricing.demandMultiplier}</span>
+                          </div>
+                        )}
+                        {msg.pricing.areaMultiplier !== 1 && (
+                          <div className="flex justify-between text-muted-foreground/90">
+                            <span>Area Multiplier</span>
+                            <span>x{msg.pricing.areaMultiplier}</span>
+                          </div>
+                        )}
+                        {msg.pricing.severityFee !== 0 && (
+                          <div className={cn("flex justify-between", msg.pricing.severityFee < 0 ? "text-green-600 dark:text-green-400" : "text-red-500")}>
+                            <span>Severity Adj.</span>
+                            <span>{msg.pricing.severityFee < 0 ? '-' : '+'}{formatCurrency(Math.abs(msg.pricing.severityFee))}</span>
+                          </div>
+                        )}
                         {msg.pricing.weekendSurcharge > 0 && (
-                          <div className="flex justify-between">
+                          <div className="flex justify-between text-muted-foreground/90">
                             <span>Weekend Surcharge</span>
                             <span>{formatCurrency(msg.pricing.weekendSurcharge)}</span>
                           </div>
                         )}
+                        {msg.pricing.nightCharge > 0 && (
+                          <div className="flex justify-between text-amber-500 font-medium">
+                            <span>Night Surcharge</span>
+                            <span>{formatCurrency(msg.pricing.nightCharge)}</span>
+                          </div>
+                        )}
+                        {msg.pricing.holidayCharge > 0 && (
+                          <div className="flex justify-between text-indigo-500 font-medium">
+                            <span>Holiday Surcharge</span>
+                            <span>{formatCurrency(msg.pricing.holidayCharge)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-muted-foreground/90">
+                          <span>Travel Allocation</span>
+                          <span>{formatCurrency(msg.pricing.travelFee || 75)}</span>
+                        </div>
                         <div className="flex justify-between">
                           <span>Platform Fee</span>
                           <span>{formatCurrency(msg.pricing.platformFee)}</span>
