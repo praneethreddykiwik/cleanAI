@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Users,
   Search,
@@ -13,6 +13,7 @@ import {
   Mail,
   AlertTriangle,
 } from 'lucide-react';
+import { apiCall } from '@/lib/api';
 import { DashboardLayout } from '@/components/layouts/DashboardLayout';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { Button } from '@/components/ui/button';
@@ -37,19 +38,53 @@ const initialUsers = [
 ];
 
 export default function AdminUsersPage() {
-  const [users, setUsers] = useState(initialUsers);
+  const [users, setUsers] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<'ALL' | 'CUSTOMER' | 'VENDOR' | 'AGENT'>('ALL');
 
-  const handleToggleStatus = (id: string, currentStatus: string) => {
-    const nextStatus = currentStatus === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
-    setUsers((prev) =>
-      prev.map((u) => (u.id === id ? { ...u, status: nextStatus } : u))
-    );
-    if (nextStatus === 'SUSPENDED') {
-      toast.error('User account suspended successfully.');
-    } else {
-      toast.success('User account restored successfully.');
+  const fetchUsers = async () => {
+    try {
+      const response = await apiCall('/admin/users');
+      if (response.success && response.data) {
+        const mapped = response.data.map((u: any) => ({
+          id: u.id,
+          name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'No Name',
+          email: u.email,
+          phone: u.phone || 'N/A',
+          role: u.role,
+          status: u.isActive ? 'ACTIVE' : 'SUSPENDED',
+          joined: u.createdAt
+        }));
+        setUsers(mapped);
+      }
+    } catch (err: any) {
+      toast.error('Failed to load users list.');
+    }
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const handleToggleStatus = async (id: string, currentStatus: string) => {
+    const isSuspending = currentStatus === 'ACTIVE';
+    const endpoint = `/admin/users/${id}/${isSuspending ? 'suspend' : 'restore'}`;
+    try {
+      const response = await apiCall(endpoint, { method: 'PATCH' });
+      if (response.success) {
+        setUsers((prev) =>
+          prev.map((u) => (u.id === id ? { ...u, status: isSuspending ? 'SUSPENDED' : 'ACTIVE' } : u))
+        );
+        if (isSuspending) {
+          toast.error('User account suspended successfully.');
+        } else {
+          toast.success('User account restored successfully.');
+        }
+      } else {
+        toast.error(response.message || 'Operation failed.');
+      }
+    } catch (err: any) {
+      toast.error('Failed to update user status.');
     }
   };
 

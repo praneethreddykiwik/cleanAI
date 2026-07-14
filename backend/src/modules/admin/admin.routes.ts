@@ -290,3 +290,15 @@ adminRoutes.patch('/users/:id/restore', authMiddleware as any, authorizeRoles('A
     res.status(500).json({ success: false, message: error.message || 'Failed to restore user' });
   }
 });
+
+// List all users for admin directory dashboard
+adminRoutes.get('/users', authMiddleware as any, authorizeRoles('ADMIN') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const users = await prisma.user.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    res.status(200).json({ success: true, data: users });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to fetch users list' });
+  }
+});
