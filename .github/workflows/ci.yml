@@ -1,0 +1,88 @@
+name: CleanAI CI/CD Core Pipeline
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  validate-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cleanai
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      # --- Validate & Test Backend ---
+      - name: Install Backend Dependencies
+        run: npm ci --legacy-peer-deps
+        working-directory: ./backend
+
+      - name: Validate Prisma Schema
+        run: npx prisma validate
+        working-directory: ./backend
+
+      - name: Run Backend Linter Audit
+        run: npm run lint
+        working-directory: ./backend
+
+      - name: Compile Backend TypeScript (tsc)
+        run: npm run build
+        working-directory: ./backend
+
+      # --- Validate & Test Frontend ---
+      - name: Install Frontend Dependencies
+        run: npm ci --legacy-peer-deps
+        working-directory: ./frontend
+
+      - name: Run Frontend Linter Audit
+        run: npm run lint
+        working-directory: ./frontend
+
+      - name: Compile Frontend Next.js Production Build
+        run: npm run build
+        working-directory: ./frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:4000/api/v1
+          NEXT_PUBLIC_SOCKET_URL: http://localhost:4000
+          NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: mock-maps-key
+          NEXT_TELEMETRY_DISABLED: 1
+
+      # --- Validate Docker Stack Build ---
+      - name: Build Backend Docker Image
+        run: docker build -t cleanai-backend:latest ./backend
+
+      - name: Build Frontend Docker Image
+        run: docker build -t cleanai-frontend:latest ./frontend

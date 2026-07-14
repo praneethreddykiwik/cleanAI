@@ -1,0 +1,769 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String         @id @default(uuid())
+  email            String         @unique
+  phone            String         @unique
+  firstName        String
+  lastName         String
+  passwordHash     String
+  role             UserRole
+  avatar           String?
+  isActive         Boolean        @default(true)
+  isEmailVerified  Boolean        @default(false)
+  isPhoneVerified  Boolean        @default(false)
+  emailVerifyToken String?
+  phoneOtp         String?
+  phoneOtpExpiry   DateTime?
+  resetToken       String?
+  resetTokenExpiry DateTime?
+  lastLoginAt      DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  agent            Agent?
+  auditLogs        AuditLog[]
+  customer         Customer?
+  notifications    Notification[]
+  refreshTokens    RefreshToken[]
+  sessions         Session[]
+  vendor           Vendor?
+
+  @@index([email])
+  @@index([phone])
+  @@index([role])
+  @@map("users")
+}
+
+model Session {
+  id         String   @id @default(uuid())
+  userId     String
+  deviceInfo String?
+  ipAddress  String?
+  userAgent  String?
+  isActive   Boolean  @default(true)
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  isRevoked Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@map("refresh_tokens")
+}
+
+model Customer {
+  id                          String    @id @default(uuid())
+  userId                      String    @unique
+  profileCompletionPercentage Int       @default(0)
+  preferences                 Json?
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
+  addresses                   Address[]
+  bookings                    Booking[]
+  user                        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviews                     Review[]
+  supportTickets              SupportTicket[]
+  conversations               AIConversation[]
+  memories                    CustomerMemory[]
+  supportConversations        SupportConversation[]
+  wallet                      Wallet?
+  subscription                Subscription?
+  featureStore                FeatureStore?
+
+  @@map("customers")
+}
+
+model Address {
+  id         String    @id @default(uuid())
+  customerId String
+  label      String
+  line1      String
+  line2      String?
+  city       String
+  state      String
+  pincode    String
+  landmark   String?
+  latitude   Float?
+  longitude  Float?
+  isDefault  Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  bookings   Booking[]
+
+  @@index([customerId])
+  @@map("addresses")
+}
+
+model Vendor {
+  id                  String          @id @default(uuid())
+  userId              String          @unique
+  businessName        String
+  businessDescription String?
+  gstNumber           String?
+  panNumber           String?
+  bankAccountNumber   String?
+  bankIfscCode        String?
+  rating              Float           @default(0)
+  totalJobs           Int             @default(0)
+  status              VendorStatus    @default(PENDING)
+  isVerified          Boolean         @default(false)
+  serviceAreas        String[]
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  agents              Agent[]
+  bookings            Booking[]
+  documents           Document[]
+  reviews             Review[]
+  vendorServices      VendorService[]
+  settlements         Settlement[]
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("vendors")
+}
+
+model Agent {
+  id        String      @id @default(uuid())
+  userId    String      @unique
+  vendorId  String
+  status    AgentStatus @default(OFFLINE)
+  rating    Float       @default(0)
+  totalJobs Int         @default(0)
+  skills    String[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vendor    Vendor      @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  bookings  Booking[]
+  location  AgentLocation?
+
+  @@index([vendorId])
+  @@index([status])
+  @@map("agents")
+}
+
+model Service {
+  id             String          @id @default(uuid())
+  name           String
+  slug           String          @unique
+  description    String
+  category       String
+  icon           String
+  image          String
+  basePrice      Float
+  isActive       Boolean         @default(true)
+  sortOrder      Int             @default(0)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  bookings       Booking[]
+  vendorServices VendorService[]
+
+  @@index([slug])
+  @@index([category])
+  @@index([isActive])
+  @@map("services")
+}
+
+model VendorService {
+  id        String   @id @default(uuid())
+  vendorId  String
+  serviceId String
+  price     Float
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  service   Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  vendor    Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@unique([vendorId, serviceId])
+  @@index([vendorId])
+  @@map("vendor_services")
+}
+
+model Booking {
+  id            String                 @id @default(uuid())
+  bookingNumber String                 @unique
+  customerId    String
+  serviceId     String
+  vendorId      String?
+  agentId       String?
+  addressId     String
+  scheduledDate DateTime
+  scheduledTime String
+  status        BookingStatus          @default(PENDING)
+  notes         String?
+  totalAmount   Float
+  platformFee   Float
+  vendorAmount  Float
+  paymentStatus PaymentStatus          @default(PENDING)
+  couponId      String?
+  cancelReason  String?
+  completedAt   DateTime?
+  latitude      Float?
+  longitude     Float?
+  placeId       String?
+  city          String?
+  state         String?
+  postalCode    String?
+  country       String?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  statusHistory BookingStatusHistory[]
+  address       Address                @relation(fields: [addressId], references: [id])
+  agent         Agent?                 @relation(fields: [agentId], references: [id])
+  customer      Customer               @relation(fields: [customerId], references: [id])
+  service       Service                @relation(fields: [serviceId], references: [id])
+  vendor        Vendor?                @relation(fields: [vendorId], references: [id])
+  reviews             Review[]
+  jobComplexity       JobComplexity?
+  supportTickets      SupportTicket[]
+  timelines           BookingTimeline[]
+  supportConversations SupportConversation[]
+  payments            Payment[]
+  invoice             Invoice?
+  coupon              Coupon?                @relation(fields: [couponId], references: [id])
+
+  @@index([customerId])
+  @@index([vendorId])
+  @@index([agentId])
+  @@index([couponId])
+  @@index([status])
+  @@index([bookingNumber])
+  @@index([createdAt])
+  @@index([scheduledDate])
+  @@map("bookings")
+}
+
+model BookingStatusHistory {
+  id        String        @id @default(uuid())
+  bookingId String
+  status    BookingStatus
+  notes     String?
+  changedBy String
+  createdAt DateTime      @default(now())
+  booking   Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@map("booking_status_history")
+}
+
+model Review {
+  id              String   @id @default(uuid())
+  bookingId       String
+  customerId      String
+  vendorId        String?
+  rating          Int
+  qualityRating   Int?
+  punctuality     Int?
+  professionalism Int?
+  comment         String?
+  imageUrls       String[] @default([])
+  sentiment       String?  // "POSITIVE", "NEUTRAL", "NEGATIVE"
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  booking         Booking  @relation(fields: [bookingId], references: [id])
+  customer        Customer @relation(fields: [customerId], references: [id])
+  vendor          Vendor?  @relation(fields: [vendorId], references: [id])
+
+  @@unique([bookingId, customerId])
+  @@index([vendorId])
+  @@map("reviews")
+}
+
+model Document {
+  id        String         @id @default(uuid())
+  vendorId  String
+  type      DocumentType
+  name      String
+  url       String
+  status    DocumentStatus @default(PENDING)
+  notes     String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  vendor    Vendor         @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@map("documents")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  role      UserRole         @default(CUSTOMER)
+  title     String
+  message   String
+  type      NotificationType @default(SYSTEM)
+  priority  String           @default("MEDIUM")
+  isRead    Boolean          @default(false)
+  actionUrl String?
+  metadata  Json?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @default(now()) @updatedAt
+  deletedAt DateTime?
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries  NotificationDelivery[]
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([role])
+  @@map("notifications")
+}
+
+model Setting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  description String?
+  isPublic    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model AuditLog {
+  id         String      @id @default(uuid())
+  userId     String?
+  action     AuditAction
+  resource   String
+  resourceId String?
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime    @default(now())
+  user       User?       @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@map("audit_logs")
+}
+
+enum UserRole {
+  CUSTOMER
+  VENDOR
+  AGENT
+  ADMIN
+}
+
+enum VendorStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum AgentStatus {
+  AVAILABLE
+  BUSY
+  OFFLINE
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  VENDOR_ACCEPTED
+  AGENT_ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+  FAILED
+}
+
+enum NotificationType {
+  BOOKING
+  PAYMENT
+  SYSTEM
+  PROMOTION
+  ALERT
+}
+
+enum DocumentType {
+  GST
+  PAN
+  AADHAAR
+  LICENSE
+  INSURANCE
+  OTHER
+}
+
+enum DocumentStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum AuditAction {
+  CREATE
+  READ
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  APPROVE
+  REJECT
+  SUSPEND
+RESTORE
+}
+
+model JobComplexity {
+  id                String   @id @default(uuid())
+  bookingId         String   @unique
+  service           String
+  subcategory       String?
+  confidence        Float
+  severity          String   // e.g. "Low", "Medium", "High"
+  estimatedDuration String   // e.g. "5 Hours"
+  workersRequired   Int
+  difficulty        String   // e.g. "Low", "Medium", "High"
+  objectsDetected   String[]
+  damageLevel       String
+  recommendedTools  String[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  booking           Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("job_complexities")
+}
+
+model SupportTicket {
+  id                String   @id @default(uuid())
+  bookingId         String
+  customerId        String
+  issueDescription  String
+  status            String   // "PENDING", "RESOLVED"
+  aiAnalysis        String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  booking           Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  customer          Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("support_tickets")
+}
+
+model AIConversation {
+  id         String                @id @default(uuid())
+  customerId String
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+  customer   Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  messages   ConversationMessage[]
+
+  @@map("ai_conversations")
+}
+
+model ConversationMessage {
+  id             String         @id @default(uuid())
+  conversationId String
+  sender         String         // "user" or "assistant"
+  text           String
+  image          String?
+  createdAt      DateTime       @default(now())
+  conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("conversation_messages")
+}
+
+model CustomerMemory {
+  id         String   @id @default(uuid())
+  customerId String
+  key        String   // e.g. "favorite_vendor", "favorite_service", "preferred_time", "previous_complaint"
+  value      String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("customer_memories")
+}
+
+model AgentExecutionLog {
+  id         String   @id @default(uuid())
+  bookingId  String?
+  agentName  String   // e.g. "Supervisor Agent", "Vision Agent", "Pricing Agent"
+  status     String   // e.g. "STARTED", "COMPLETED", "FAILED"
+  details    String?
+  createdAt  DateTime @default(now())
+
+  @@map("agent_execution_logs")
+}
+
+model BookingTimeline {
+  id         String   @id @default(uuid())
+  bookingId  String
+  status     String   // e.g. "REQUESTED", "SEARCHING_VENDOR", "ARRIVED", "COMPLETED"
+  notes      String?
+  createdAt  DateTime @default(now())
+  booking    Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("booking_timelines")
+}
+
+model AgentLocation {
+  id          String   @id @default(uuid())
+  agentId     String   @unique
+  latitude    Float
+  longitude   Float
+  heading     Float?
+  speed       Float?
+  accuracy    Float?
+  lastUpdated DateTime @default(now()) @updatedAt
+  agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@map("agent_locations")
+}
+
+model NotificationDelivery {
+  id             String   @id @default(uuid())
+  notificationId String
+  channel        String   // "DATABASE", "SOCKET", "EMAIL", "SMS", "PUSH"
+  status         String   // "SENT", "DELIVERED", "FAILED"
+  deliveredAt    DateTime @default(now())
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@map("notification_deliveries")
+}
+
+model SupportConversation {
+  id         String           @id @default(uuid())
+  bookingId  String
+  customerId String
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  booking    Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  customer   Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  messages   SupportMessage[]
+
+  @@map("support_conversations")
+}
+
+model SupportMessage {
+  id             String              @id @default(uuid())
+  conversationId String
+  sender         String              // "CUSTOMER", "AGENT", "SUPPORT", "SYSTEM"
+  text           String
+  image          String?
+  createdAt      DateTime            @default(now())
+  conversation   SupportConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("support_messages")
+}
+
+
+model LiveSession {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  socketId    String?
+  status      String   // "ONLINE", "OFFLINE"
+  lastSeen    DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("live_sessions")
+}
+
+model SystemMetric {
+  id        String   @id @default(uuid())
+  key       String   // e.g. "avg_vendor_acceptance_time", "avg_completion_time", "ai_response_time"
+  value     Float
+  createdAt DateTime @default(now())
+
+  @@map("system_metrics")
+}
+
+model Payment {
+  id              String         @id @default(uuid())
+  bookingId       String
+  gateway         String         // e.g. "RAZORPAY", "STRIPE"
+  gatewayOrderId  String?        @unique
+  gatewayPaymentId String?       @unique
+  amount          Float
+  currency        String         @default("INR")
+  status          PaymentStatus  @default(PENDING)
+  rawResponse     String?        // JSON representation of gateway response
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  booking         Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  refunds         Refund[]
+
+  @@map("payments")
+}
+
+model Refund {
+  id              String         @id @default(uuid())
+  paymentId       String
+  gatewayRefundId String?        @unique
+  amount          Float
+  status          String         // e.g. "PENDING", "PROCESSED", "FAILED"
+  reason          String?
+  rawResponse     String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  payment         Payment        @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@map("refunds")
+}
+
+model Invoice {
+  id            String   @id @default(uuid())
+  bookingId     String   @unique
+  invoiceNumber String   @unique
+  amount        Float
+  platformFee   Float
+  vendorAmount  Float
+  gstAmount     Float
+  status        String   // "DRAFT", "ISSUED", "PAID", "VOID"
+  url           String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  booking       Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("invoices")
+}
+
+model Settlement {
+  id              String    @id @default(uuid())
+  vendorId        String
+  amount          Float
+  status          String    // "PENDING", "PROCESSED", "FAILED"
+  processedAt     DateTime?
+  referenceNumber String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  vendor          Vendor    @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@map("settlements")
+}
+
+model Wallet {
+  id           String              @id @default(uuid())
+  customerId   String              @unique
+  balance      Float               @default(0.0)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  customer     Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@map("wallets")
+}
+
+model WalletTransaction {
+  id          String   @id @default(uuid())
+  walletId    String
+  amount      Float    // positive for credit, negative for debit
+  type        String   // "REFUND", "PROMOTIONAL", "REFERRAL", "PAYMENT"
+  description String?
+  createdAt   DateTime @default(now())
+  wallet      Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@map("wallet_transactions")
+}
+
+model Coupon {
+  id             String    @id @default(uuid())
+  code           String    @unique
+  discountType   String    // "PERCENTAGE", "FLAT"
+  value          Float
+  maxDiscount    Float?    // Cap for percentage coupons
+  minOrderValue  Float     @default(0.0)
+  expiryDate     DateTime
+  usageLimit     Int       @default(1000)
+  usageCount     Int       @default(0)
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  bookings       Booking[]
+
+  @@map("coupons")
+}
+
+model Subscription {
+  id           String    @id @default(uuid())
+  customerId   String    @unique
+  planName     String    // "BASIC", "PLUS", "PREMIUM"
+  status       String    // "ACTIVE", "EXPIRED", "CANCELLED"
+  startDate    DateTime  @default(now())
+  endDate      DateTime
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+model TaxConfiguration {
+  id        String   @id @default(uuid())
+  state     String   @unique
+  gstRate   Float    @default(0.18) // e.g. 18% GST
+  updatedAt DateTime @updatedAt
+
+  @@map("tax_configurations")
+}
+
+model FeatureStore {
+  id                 String   @id @default(uuid())
+  customerId         String   @unique
+  bookingFrequency   Int      @default(0)
+  averageSpend       Float    @default(0.0)
+  preferredTimeSlot  String?
+  preferredService   String?
+  preferredTechnician String?
+  cancellationRate   Float    @default(0.0)
+  customerValue      Float    @default(0.0) // CLV
+  lastInteraction    DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  customer           Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("feature_stores")
+}
+
+model Experiment {
+  id          String              @id @default(uuid())
+  name        String              @unique // e.g. "PRICING_MODEL_V2"
+  status      String              @default("ACTIVE") // "ACTIVE", "PAUSED", "COMPLETED"
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  assignments ExperimentAssignment[]
+
+  @@map("experiments")
+}
+
+model ExperimentAssignment {
+  id           String     @id @default(uuid())
+  experimentId String
+  userId       String
+  variant      String     // e.g. "A", "B"
+  converted    Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+  experiment   Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@unique([experimentId, userId])
+  @@map("experiment_assignments")
+}
+
