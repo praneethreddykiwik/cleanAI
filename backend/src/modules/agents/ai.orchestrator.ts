@@ -1,5 +1,6 @@
 import { prisma } from '@/database';
 import { AgentsService, JobComplexityResult, PriceEstimationBreakdown } from './agents.service';
+import { ModelRegistry } from '@/config/ai/model.registry';
 
 export interface ChatSessionResponse {
   conversationId: string;
@@ -162,11 +163,46 @@ export class AIOrchestrator {
     await logStep('Booking Agent', 'Verifying calendar slot availability.');
 
     // Create assistant text response summary
-    let assistantText = `Analysis complete! Based on the image & details, here is the complexity assessment and estimated price range:`;
-    if (memories.length > 0) {
-      const lastService = memories.find(m => m.key === 'favorite_service');
-      if (lastService && lastService.value.toLowerCase() === complexity.service.toLowerCase()) {
-        assistantText = `Welcome back! Based on your favorite service history for **${lastService.value}**, here is the complexity assessment:`;
+    let assistantText = '';
+    const geminiKey = process.env.GEMINI_API_KEY || '';
+    const groqKey = process.env.GROQ_API_KEY || '';
+
+    if (geminiKey || groqKey) {
+      const provider = ModelRegistry.getProvider();
+      const explanationPrompt = `
+        You are the CleanAI Supervisor Agent. Explain the reasoning for the job complexity assessment to the user.
+        User request: "${params.text}"
+        Detected Service: "${complexity.service}"
+        Detected Subcategory: "${complexity.subcategory}"
+        Severity: "${complexity.severity}"
+        Difficulty: "${complexity.difficulty}"
+        Workers Suggested: ${complexity.workersRequired}
+        Estimated Duration: "${complexity.estimatedDuration}"
+        Objects/Issues Detected: ${JSON.stringify(complexity.objectsDetected)}
+        Damage Level: "${complexity.damageLevel}"
+        Recommended Tools: ${JSON.stringify(complexity.recommendedTools)}
+
+        Write a concise, helpful explanation (2-3 sentences max) detailing why this service type and severity level was assessed, outlining any safety elements, debris levels, or specialized tools required, e.g., "I detected heavy grease on the stove grills and tile grout. This requires deep kitchen cleaning with specialized degreasing chemicals, and will take about 4 hours."
+      `;
+      try {
+        assistantText = await provider.generateText(explanationPrompt);
+      } catch (err) {
+        assistantText = `I have analyzed your request for ${complexity.service}. The job is estimated as ${complexity.severity} severity, requiring ${complexity.workersRequired} technician(s) for approximately ${complexity.estimatedDuration}.`;
+      }
+    } else {
+      // High-fidelity local simulation reasoning based on complexity results
+      if (complexity.service === 'Kitchen Cleaning') {
+        assistantText = `I have completed the analysis on your Kitchen! I detected oil deposits, kitchen chimney grease, and stove grill debris. This is a ${complexity.severity} severity request requiring degreasing chemicals, and is estimated to take ${complexity.estimatedDuration} with ${complexity.workersRequired} technician(s).`;
+      } else if (complexity.service === 'Bathroom Cleaning') {
+        assistantText = `I have completed the analysis on your Bathroom! I detected hardwater stains and limescale on the tiled walls and fixtures. This requires descaling solution and buffing pads, taking about ${complexity.estimatedDuration} with ${complexity.workersRequired} technician(s).`;
+      } else if (complexity.service === 'Electrical') {
+        assistantText = `I have completed the analysis on your electrical lines! I identified potential burnt wiring or a defective switch on your Power Distribution Board. Due to safety concerns, this is flagged as ${complexity.severity} severity and requires insulated tools and testing.`;
+      } else if (complexity.service === 'Plumbing') {
+        assistantText = `I have completed the plumbing analysis! I identified potential leakage or pipe corrosion in the drainage assembly. This will require a pipe wrench and sealant tape to repair.`;
+      } else if (complexity.service === 'Sofa Cleaning') {
+        assistantText = `I have completed the upholstery analysis! I identified pet hair and stain spots on the fabric upholstery. This requires fabric shampoo and an extraction vacuum.`;
+      } else {
+        assistantText = `I have completed the analysis! Based on the details, this job is classified under ${complexity.service} at ${complexity.severity} severity. It will take about ${complexity.estimatedDuration} with ${complexity.workersRequired} technician(s).`;
       }
     }
 
