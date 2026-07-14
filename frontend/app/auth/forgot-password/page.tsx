@@ -38,13 +38,14 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <motion.div
-      variants={authCardVariants}
-      initial="hidden"
-      animate="visible"
-      exit="exit"
-      className="w-full max-w-md p-8 rounded-2xl border border-border/50 bg-card/60 backdrop-blur-xl shadow-2xl relative overflow-hidden"
-    >
+    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+      <motion.div
+        variants={authCardVariants}
+        initial="hidden"
+        animate="visible"
+        exit="exit"
+        className="w-full max-w-md p-8 rounded-2xl border border-border/50 bg-card/60 backdrop-blur-xl shadow-2xl relative overflow-hidden"
+      >
       {/* Decorative gradient overlay */}
       <div className="absolute inset-0 bg-gradient-to-tr from-primary/5 via-transparent to-primary/5 pointer-events-none" />
 
@@ -127,5 +128,6 @@ export default function ForgotPasswordPage() {
         )}
       </div>
     </motion.div>
+  </div>
   );
 }
