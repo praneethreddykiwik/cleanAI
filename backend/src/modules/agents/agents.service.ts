@@ -1,4 +1,5 @@
 import { prisma } from '@/database';
+import { ModelRegistry } from '@/config/ai/model.registry';
 
 export interface JobComplexityResult {
   service: string;
@@ -39,12 +40,58 @@ export class AgentsService {
     userDescription: string,
     inferredService: string = 'Deep Cleaning'
   ): Promise<JobComplexityResult> {
-    const apiKey = process.env.GEMINI_API_KEY || '';
+    const geminiKey = process.env.GEMINI_API_KEY || '';
+    const groqKey = process.env.GROQ_API_KEY || '';
 
-    if (!apiKey) {
-      console.log('[Vision Agent] GEMINI_API_KEY is not configured. Running high-fidelity simulation...');
+    if (!geminiKey && !groqKey) {
+      console.log('[Vision Agent] Neither GEMINI_API_KEY nor GROQ_API_KEY is configured. Running high-fidelity simulation...');
       return this.simulateVisionAnalysis(userDescription, inferredService);
     }
+
+    if (groqKey) {
+      const provider = ModelRegistry.getProvider();
+      if (imageBufferBase64) {
+        try {
+          const result = await provider.analyzeImage(imageBufferBase64);
+          return {
+            service: inferredService,
+            subcategory: result.roomType || 'General Area',
+            confidence: 0.9,
+            severity: result.complexity > 0.7 ? 'High' : 'Medium',
+            estimatedDuration: '2 Hours',
+            workersRequired: 1,
+            difficulty: result.complexity > 0.7 ? 'High' : 'Medium',
+            objectsDetected: result.objects || ['Surface dust'],
+            damageLevel: 'Low',
+            recommendedTools: ['Cleaner liquid'],
+          };
+        } catch {
+          return this.simulateVisionAnalysis(userDescription, inferredService);
+        }
+      } else {
+        const prompt = `Analyze: "${userDescription}". Respond ONLY with raw JSON: { "roomType": "string", "complexity": 0.5, "objects": ["string"] }`;
+        try {
+          const textResult = await provider.generateText(prompt);
+          const parsed = JSON.parse(textResult);
+          return {
+            service: inferredService,
+            subcategory: parsed.roomType || 'General Area',
+            confidence: 0.9,
+            severity: parsed.complexity > 0.7 ? 'High' : 'Medium',
+            estimatedDuration: '2 Hours',
+            workersRequired: 1,
+            difficulty: parsed.complexity > 0.7 ? 'High' : 'Medium',
+            objectsDetected: parsed.objects || ['Surface dust'],
+            damageLevel: 'Low',
+            recommendedTools: ['Cleaner liquid'],
+          };
+        } catch {
+          return this.simulateVisionAnalysis(userDescription, inferredService);
+        }
+      }
+    }
+
+    const apiKey = geminiKey;
 
     try {
       const promptText = `
