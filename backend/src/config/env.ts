@@ -31,4 +31,19 @@ if (!parsed.success) {
   process.exit(1);
 }
 
+// Strict validation of production environment variables
+if (process.env.NODE_ENV === 'production') {
+  const requiredVars = [
+    'DATABASE_URL',
+    'JWT_SECRET',
+    'GEMINI_API_KEY',
+    'REDIS_URL'
+  ];
+  const missing = requiredVars.filter(v => !process.env[v] || process.env[v] === '');
+  if (missing.length > 0) {
+    console.error(`❌ CRITICAL ERROR: Missing required environment variables in production: ${missing.join(', ')}`);
+    process.exit(1);
+  }
+}
+
 export const env = parsed.data;

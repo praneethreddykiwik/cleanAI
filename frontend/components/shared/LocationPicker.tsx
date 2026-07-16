@@ -4,11 +4,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useMap } from './MapProvider';
 import { Navigation, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 
 interface LocationPickerProps {
   latitude: number;
   longitude: number;
-  onChangeLocation: (lat: number, lng: number) => void;
+  onChangeLocation: (lat: number, lng: number, details?: any) => void;
   className?: string;
 }
 
@@ -31,6 +32,40 @@ export function LocationPicker({
 
   const [isGettingCurrentLocation, setIsGettingCurrentLocation] = useState(false);
 
+  const performReverseGeocodeAndPropagate = async (lat: number, lng: number) => {
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=18`, {
+        headers: {
+          'Accept-Language': 'en',
+          'User-Agent': 'CleanAI-Marketplace-Beta'
+        }
+      });
+      const data = await res.json();
+      if (data && data.address) {
+        const city = data.address.city || data.address.town || data.address.suburb || data.address.village || '';
+        const state = data.address.state || '';
+        const pincode = data.address.postcode || '';
+        const country = data.address.country || '';
+        
+        onChangeLocation(lat, lng, {
+          address: data.display_name,
+          latitude: lat,
+          longitude: lng,
+          city,
+          state,
+          postalCode: pincode,
+          country,
+          placeId: `osm-${lat}-${lng}`
+        });
+        return;
+      }
+    } catch (err) {
+      console.error('Reverse geocoding error:', err);
+    }
+    // Fallback if Osm API fails
+    onChangeLocation(lat, lng);
+  };
+
   // Initialize Map
   useEffect(() => {
     if (typeof window === 'undefined' || !isLoaded || !mapContainerRef.current) return;
@@ -50,6 +85,7 @@ export function LocationPicker({
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '© OpenStreetMap contributors',
+          maxZoom: 19
         }).addTo(map);
 
         // Fix Leaflet marker icons not showing up due to build path issues
@@ -68,7 +104,7 @@ export function LocationPicker({
 
         marker.on('dragend', () => {
           const latLng = marker.getLatLng();
-          onChangeLocation(latLng.lat, latLng.lng);
+          performReverseGeocodeAndPropagate(latLng.lat, latLng.lng);
         });
       });
     } else if (provider === 'google' && window.google) {
@@ -102,7 +138,7 @@ export function LocationPicker({
         if (googleMarkerRef.current) {
           const position = googleMarkerRef.current.getPosition();
           if (position) {
-            onChangeLocation(position.lat(), position.lng());
+            performReverseGeocodeAndPropagate(position.lat(), position.lng());
           }
         }
       });
@@ -126,7 +162,7 @@ export function LocationPicker({
   // Request current GPS coordinates
   const handleGetCurrentLocation = () => {
     if (!navigator.geolocation) {
-      alert('Geolocation is not supported by your browser.');
+      toast.error('Geolocation is not supported by your browser.');
       return;
     }
 
@@ -136,12 +172,20 @@ export function LocationPicker({
         setIsGettingCurrentLocation(false);
         const lat = position.coords.latitude;
         const lng = position.coords.longitude;
-        onChangeLocation(lat, lng);
+        const accuracy = position.coords.accuracy;
+
+        if (accuracy > 30) {
+          toast.warning(`GPS accuracy is low (~${Math.round(accuracy)}m). Please drag the pin on map to correct.`);
+        } else {
+          toast.success('Location obtained successfully.');
+        }
+
+        performReverseGeocodeAndPropagate(lat, lng);
       },
       (error) => {
         setIsGettingCurrentLocation(false);
         console.error('Error getting location:', error);
-        alert('Failed to retrieve location. Please check your browser permissions.');
+        toast.error('Failed to retrieve location. Please check browser permissions.');
       },
       { enableHighAccuracy: true, timeout: 5000 }
     );

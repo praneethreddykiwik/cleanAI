@@ -38,6 +38,34 @@ const VENDOR_COORDINATES: Record<string, { lat: number; lng: number }> = {
 };
 
 export class AgentsService {
+  private static async logSystemEvent(params: {
+    action: string;
+    status: 'SUCCESS' | 'FAILED';
+    message?: string;
+    visionLatencyMs?: number;
+    pricingLatencyMs?: number;
+    matchingLatencyMs?: number;
+    totalLatencyMs?: number;
+    metadata?: any;
+  }) {
+    try {
+      await prisma.systemLog.create({
+        data: {
+          action: params.action,
+          status: params.status,
+          message: params.message || null,
+          visionLatencyMs: params.visionLatencyMs || null,
+          pricingLatencyMs: params.pricingLatencyMs || null,
+          matchingLatencyMs: params.matchingLatencyMs || null,
+          totalLatencyMs: params.totalLatencyMs || null,
+          metadata: params.metadata || null,
+        }
+      });
+    } catch (err) {
+      console.error('[System Logging Error] Failed to write SystemLog:', err);
+    }
+  }
+
   /**
    * Helper utility to clean and parse JSON responses from LLMs
    */
@@ -121,6 +149,7 @@ export class AgentsService {
     userDescription: string,
     inferredService: string = 'Deep Cleaning'
   ): Promise<JobComplexityResult> {
+    const startTime = process.hrtime.bigint();
     const promptVersion = 'v1.0.0';
     const model = process.env.GROQ_API_KEY ? 'llama-3.2-11b-vision-preview' : 'gemini-2.5-flash';
 
@@ -133,6 +162,15 @@ export class AgentsService {
         const cached = await redisService.get<JobComplexityResult>(`ai:vision:${imageHash}`);
         if (cached) {
           console.log('[Vision Cache] Cache hit in Redis for image hash:', imageHash);
+          const durationMs = Math.round(Number(process.hrtime.bigint() - startTime) / 1e6);
+          await this.logSystemEvent({
+            action: 'AI_COMPLEXITY_ANALYSIS',
+            status: 'SUCCESS',
+            message: 'Cache hit in Redis',
+            visionLatencyMs: durationMs,
+            totalLatencyMs: durationMs,
+            metadata: { imageHash, hit: 'redis' }
+          });
           return cached;
         }
       } catch (err) {
@@ -156,6 +194,15 @@ export class AgentsService {
             console.log('[Vision Cache] Cache hit in Postgres for image hash:', imageHash);
             // Re-cache in Redis
             await redisService.set(`ai:vision:${imageHash}`, details.complexity, 604800); // 7 days
+            const durationMs = Math.round(Number(process.hrtime.bigint() - startTime) / 1e6);
+            await this.logSystemEvent({
+              action: 'AI_COMPLEXITY_ANALYSIS',
+              status: 'SUCCESS',
+              message: 'Cache hit in Postgres',
+              visionLatencyMs: durationMs,
+              totalLatencyMs: durationMs,
+              metadata: { imageHash, hit: 'postgres' }
+            });
             return details.complexity;
           }
         }
@@ -300,6 +347,15 @@ export class AgentsService {
     }
 
     if (!finalResult) {
+      const durationMs = Math.round(Number(process.hrtime.bigint() - startTime) / 1e6);
+      await this.logSystemEvent({
+        action: 'AI_COMPLEXITY_ANALYSIS',
+        status: 'FAILED',
+        message: 'AI analysis validation failed after multiple retry attempts.',
+        visionLatencyMs: durationMs,
+        totalLatencyMs: durationMs,
+        metadata: { imageHash, attempts }
+      });
       throw new Error('AI analysis validation failed after multiple retry attempts.');
     }
 
@@ -313,6 +369,16 @@ export class AgentsService {
       }
     }
 
+    const durationMs = Math.round(Number(process.hrtime.bigint() - startTime) / 1e6);
+    await this.logSystemEvent({
+      action: 'AI_COMPLEXITY_ANALYSIS',
+      status: 'SUCCESS',
+      message: 'Fresh AI analysis execution',
+      visionLatencyMs: durationMs,
+      totalLatencyMs: durationMs,
+      metadata: { imageHash, model, attempts }
+    });
+
     return finalResult;
   }
 
@@ -325,6 +391,7 @@ export class AgentsService {
     isWeekend: boolean = false,
     city: string = 'Bengaluru'
   ): Promise<PriceEstimationBreakdown> {
+    const startTime = process.hrtime.bigint();
     const cleanNum = (val: any, defaultVal = 0): number => {
       if (val === undefined || val === null || typeof val !== 'number' || Number.isNaN(val) || !Number.isFinite(val)) {
         return defaultVal;
@@ -441,6 +508,16 @@ export class AgentsService {
       throw new Error('Pricing calculation output is NaN or Infinite.');
     }
 
+    const durationMs = Math.round(Number(process.hrtime.bigint() - startTime) / 1e6);
+    await this.logSystemEvent({
+      action: 'PRICING_ESTIMATION',
+      status: 'SUCCESS',
+      message: 'Pricing engine calculation successful',
+      pricingLatencyMs: durationMs,
+      totalLatencyMs: durationMs,
+      metadata: { city, isWeekend }
+    });
+
     return {
       basePrice: finalBasePrice,
       cityMultiplier: finalCityMultiplier,
@@ -468,6 +545,7 @@ export class AgentsService {
     longitude: number;
     priceRange: { min: number; max: number };
   }) {
+    const startTime = process.hrtime.bigint();
     // Find all vendors active in the service category
     const activeVendors = await prisma.vendor.findMany({
       where: {
@@ -564,6 +642,16 @@ export class AgentsService {
         acceptanceRate,
         reason,
       };
+    });
+
+    const durationMs = Math.round(Number(process.hrtime.bigint() - startTime) / 1e6);
+    await this.logSystemEvent({
+      action: 'VENDOR_MATCHING',
+      status: 'SUCCESS',
+      message: `Found and scored ${scored.length} matching vendors`,
+      matchingLatencyMs: durationMs,
+      totalLatencyMs: durationMs,
+      metadata: { serviceName: params.serviceName, matchesFound: scored.length }
     });
 
     return scored.sort((a, b) => b.matchScore - a.matchScore).slice(0, 5);

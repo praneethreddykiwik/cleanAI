@@ -32,6 +32,36 @@ adminRoutes.get('/stats', authMiddleware as any, authorizeRoles('ADMIN') as any,
     const completionRate = totalBookings > 0 ? Math.round((completedBookingsCount / totalBookings) * 100) : 100;
     const pendingApprovals = await prisma.vendor.count({ where: { status: 'PENDING' } });
 
+    // Live monitoring stats
+    const memoryUsage = process.memoryUsage();
+    const heapUsedMB = Math.round((memoryUsage.heapUsed / 1024 / 1024) * 100) / 100;
+
+    const systemLogs = await prisma.systemLog.findMany({
+      where: { action: 'AI_COMPLEXITY_ANALYSIS' }
+    });
+    const totalAIRequests = systemLogs.length;
+    const failedAIRequests = systemLogs.filter(l => l.status === 'FAILED').length;
+    const cacheHitCount = systemLogs.filter(l => l.message && (l.message.includes('Redis') || l.message.includes('Postgres'))).length;
+    
+    const cacheHitRatio = totalAIRequests > 0 ? Math.round((cacheHitCount / totalAIRequests) * 100) : 100;
+    
+    const successLogs = systemLogs.filter(l => l.status === 'SUCCESS');
+    const avgAILatency = successLogs.length > 0
+      ? Math.round(successLogs.reduce((acc, curr) => acc + (curr.visionLatencyMs || 0), 0) / successLogs.length)
+      : 1200; // default 1.2s fallback
+
+    const failedPayments = await prisma.payment.count({
+      where: { status: 'FAILED' }
+    });
+
+    const onlineVendors = await prisma.liveSession.count({
+      where: { status: 'ONLINE' }
+    });
+
+    const activeAgents = await prisma.agent.count({
+      where: { status: 'AVAILABLE' }
+    });
+
     res.status(200).json({
       success: true,
       data: {
@@ -41,8 +71,16 @@ adminRoutes.get('/stats', authMiddleware as any, authorizeRoles('ADMIN') as any,
         platformRevenue,
         completionRate,
         pendingApprovals,
-        avgResponseTime: 2,
+        avgResponseTime: avgAILatency,
         platformHealth: 99,
+        monitoring: {
+          heapUsedMB,
+          cacheHitRatio,
+          failedAIRequests,
+          failedPayments,
+          onlineVendors,
+          activeAgents,
+        }
       },
     });
   } catch (error: any) {

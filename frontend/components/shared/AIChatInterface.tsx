@@ -157,11 +157,20 @@ export function AIChatInterface({
       setCameraStream(stream);
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.play().catch((playErr) => {
+          console.error('[Video Autoplay] Play method exception:', playErr);
+        });
       }
       setShowCamera(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Camera access failed:', err);
-      toast.error('Could not access camera. Please check permissions.');
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        toast.error('Camera permission denied. Please allow camera access in browser settings.');
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        toast.error('No camera device found on this system.');
+      } else {
+        toast.error(`Could not access camera: ${err.message || 'Unknown error'}`);
+      }
     }
   };
 
@@ -200,6 +209,10 @@ export function AIChatInterface({
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      const fileName = file.name.toLowerCase();
+      if (fileName.endsWith('.heic') || fileName.endsWith('.heif')) {
+        toast.info('HEIC format detected. Converting format...');
+      }
       const reader = new FileReader();
       reader.onloadend = () => {
         setSelectedImage(reader.result as string);

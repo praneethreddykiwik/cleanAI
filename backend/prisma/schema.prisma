@@ -767,3 +767,19 @@ model ExperimentAssignment {
   @@map("experiment_assignments")
 }
 
+model SystemLog {
+  id                    String   @id @default(uuid())
+  requestId             String?
+  action                String
+  status                String   
+  message               String?
+  visionLatencyMs       Int?
+  pricingLatencyMs      Int?
+  matchingLatencyMs     Int?
+  totalLatencyMs        Int?
+  metadata              Json?
+  createdAt             DateTime @default(now())
+
+  @@map("system_logs")
+}
+

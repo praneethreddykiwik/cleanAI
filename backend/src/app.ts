@@ -8,10 +8,9 @@ import 'express-async-errors';
 
 import { env } from '@/config/env';
 import { logger } from '@/config/logger';
-import { errorHandler } from '@/middleware/errorHandler';
+import { globalErrorHandler, requestInitializer } from '@/middleware/error.middleware';
 import { notFoundHandler } from '@/middleware/notFoundHandler';
 import { rateLimiter } from '@/middleware/rateLimiter';
-import { requestId } from '@/middleware/requestId';
 import { prisma } from '@/database';
 
 // Route imports
@@ -66,7 +65,7 @@ export function createApp(): Application {
   app.use(cookieParser());
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-  app.use(requestId);
+  app.use(requestInitializer);
 
   // ==================
   // Logging
@@ -88,30 +87,43 @@ export function createApp(): Application {
   // ==================
   app.get('/api/health', async (_, res) => {
     try {
-      await prisma.$queryRaw`SELECT 1`;
-      const { redisService } = await import('@/config/redis');
-      const isRedisConnected = await redisService.ping();
+      let databaseStatus = 'connected';
+      try {
+        await prisma.$queryRaw`SELECT 1`;
+      } catch (err) {
+        databaseStatus = 'disconnected';
+      }
 
-      res.status(200).json({
-        success: true,
-        server: 'running',
-        database: {
-          provider: 'Neon PostgreSQL',
-          status: 'connected',
-        },
-        redis: {
-          status: isRedisConnected ? 'connected' : 'disconnected',
-        },
-        timestamp: new Date().toISOString(),
-        version: env.API_VERSION,
+      let redisStatus = 'connected';
+      try {
+        const { redisService } = await import('@/config/redis');
+        const isRedisConnected = await redisService.ping();
+        if (!isRedisConnected) redisStatus = 'disconnected';
+      } catch (err) {
+        redisStatus = 'disconnected';
+      }
+
+      const geminiStatus = env.GEMINI_API_KEY ? 'available' : 'unavailable';
+      const cloudinaryStatus = (process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) ? 'available' : 'unavailable';
+
+      const isHealthy = databaseStatus === 'connected' && redisStatus === 'connected';
+
+      res.status(isHealthy ? 200 : 500).json({
+        status: isHealthy ? 'ok' : 'error',
+        database: databaseStatus,
+        redis: redisStatus,
+        socket: 'running',
+        gemini: geminiStatus,
+        cloudinary: cloudinaryStatus,
+        version: '1.0.0',
+        uptime: Math.round(process.uptime())
       });
     } catch (error: any) {
       logger.error('System health check failed:', error);
       res.status(500).json({
-        success: false,
-        server: 'running',
-        error: error.message || 'System health error',
-        timestamp: new Date().toISOString(),
+        status: 'error',
+        message: error.message || 'System health error',
+        uptime: Math.round(process.uptime())
       });
     }
   });
@@ -187,7 +199,7 @@ export function createApp(): Application {
   // Error Handling
   // ==================
   app.use(notFoundHandler);
-  app.use(errorHandler);
+  app.use(globalErrorHandler);
 
   return app;
 }

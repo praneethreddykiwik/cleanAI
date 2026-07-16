@@ -108,8 +108,10 @@ function BookingPageInner() {
     setResolvedLocation(details);
   };
 
-  const handleMarkerDrag = (lat: number, lng: number) => {
-    if (resolvedLocation) {
+  const handleMarkerDrag = (lat: number, lng: number, details?: any) => {
+    if (details) {
+      setResolvedLocation(details);
+    } else if (resolvedLocation) {
       setResolvedLocation({
         ...resolvedLocation,
         latitude: lat,
