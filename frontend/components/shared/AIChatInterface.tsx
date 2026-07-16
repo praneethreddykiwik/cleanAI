@@ -204,10 +204,18 @@ export function AIChatInterface({
   };
 
   const stopCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => {
+        track.stop();
+        console.log(`[Camera] Stopped track: ${track.label}`);
+      });
+      videoRef.current.srcObject = null;
+    }
     if (cameraStream) {
       cameraStream.getTracks().forEach(track => track.stop());
-      setCameraStream(null);
     }
+    setCameraStream(null);
     setShowCamera(false);
   };
 
