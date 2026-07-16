@@ -170,6 +170,17 @@ export function AIChatInterface({
     }
   };
 
+  // Sync video stream when camera overlay mounts
+  useEffect(() => {
+    if (showCamera && cameraStream && videoRef.current) {
+      const video = videoRef.current;
+      video.srcObject = cameraStream;
+      video.play().catch((playErr) => {
+        console.error('[Video Autoplay] Play method exception:', playErr);
+      });
+    }
+  }, [showCamera, cameraStream]);
+
   // Camera functions
   const startCamera = async () => {
     try {
@@ -179,12 +190,6 @@ export function AIChatInterface({
       };
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       setCameraStream(stream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play().catch((playErr) => {
-          console.error('[Video Autoplay] Play method exception:', playErr);
-        });
-      }
       setShowCamera(true);
     } catch (err: any) {
       console.error('Camera access failed:', err);
