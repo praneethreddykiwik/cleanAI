@@ -44,13 +44,13 @@ export function createApp(): Application {
     },
   }));
 
-  const allowedOrigins = [env.CORS_ORIGIN, env.FRONTEND_URL, env.SOCKET_CORS_ORIGIN];
+  const allowedOrigins = [env.CORS_ORIGIN, env.FRONTEND_URL, env.SOCKET_CORS_ORIGIN].filter(Boolean);
   app.use(cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin || allowedOrigins.includes(origin) || allowedOrigins.some(o => o && origin.startsWith(o))) {
         callback(null, true);
       } else {
-        callback(null, allowedOrigins); // Safe fallback
+        callback(null, false);
       }
     },
     credentials: true,

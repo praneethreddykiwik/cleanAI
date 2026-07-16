@@ -22,10 +22,20 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
     ...options.headers,
   };
 
-  const res = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  let res;
+  try {
+    res = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      headers,
+    });
+  } catch (err: any) {
+    console.error('[API Fetch Error] Connection failed:', {
+      url: `${API_BASE_URL}${endpoint}`,
+      method: options.method || 'GET',
+      error: err.message || String(err)
+    });
+    throw new Error(`Backend unreachable. Connection failed to: ${API_BASE_URL}${endpoint}. Details: ${err.message || 'Connection refused'}`);
+  }
 
   if (res.status === 401 && typeof window !== 'undefined') {
     // If unauthorized, clear tokens and redirect to login
