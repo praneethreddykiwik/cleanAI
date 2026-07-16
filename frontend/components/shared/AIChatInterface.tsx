@@ -7,6 +7,7 @@ import { apiCall } from '@/lib/api';
 import { cn, formatCurrency } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import { getSocket, connectSocket } from '@/lib/socket';
 
 interface Message {
   id: string;
@@ -111,8 +112,9 @@ export function AIChatInterface({
     return base64Str;
   };
 
-  // Clipboard paste listener
+  // Clipboard paste & Socket progress listener
   useEffect(() => {
+    // 1. Setup clipboard listener
     const handlePaste = (e: ClipboardEvent) => {
       const file = e.clipboardData?.files?.[0];
       if (file && file.type.startsWith('image/')) {
@@ -125,7 +127,29 @@ export function AIChatInterface({
       }
     };
     window.addEventListener('paste', handlePaste);
-    return () => window.removeEventListener('paste', handlePaste);
+
+    // 2. Setup socket connection & progress listener
+    try {
+      connectSocket();
+      const socket = getSocket();
+      socket.on('agent.progress', (data: any) => {
+        if (data && data.agentName) {
+          setAgentStatus(`${data.agentName}: ${data.details}`);
+        }
+      });
+    } catch (err) {
+      console.warn('Failed to bind socket progression listener:', err);
+    }
+
+    return () => {
+      window.removeEventListener('paste', handlePaste);
+      try {
+        const socket = getSocket();
+        socket.off('agent.progress');
+      } catch (err) {
+        // Safe skip
+      }
+    };
   }, []);
 
   // Drag & Drop handlers

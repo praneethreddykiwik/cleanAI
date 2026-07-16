@@ -195,6 +195,16 @@ export class AIOrchestrator {
         data: { agentName, status: 'COMPLETED', details },
       });
       timelineLogs.push({ agentName, status: '✓', details });
+      try {
+        const { default: SocketService } = await import('@/config/socket');
+        SocketService.emitToRoom(`customer:${params.userId}`, 'agent.progress', {
+          agentName,
+          status: '✓',
+          details
+        });
+      } catch (err) {
+        // Safe logging fallback
+      }
     };
 
     await logStep('Supervisor Agent', 'Understanding customer request details.');
