@@ -14,6 +14,64 @@ export interface ChatSessionResponse {
 }
 
 export class AIOrchestrator {
+  private static async extractAndSavePreferences(customerId: string, text: string) {
+    const textLower = text.toLowerCase();
+    
+    const updateMemory = async (key: string, value: string) => {
+      try {
+        const existing = await prisma.customerMemory.findFirst({
+          where: { customerId, key }
+        });
+        if (existing) {
+          await prisma.customerMemory.update({
+            where: { id: existing.id },
+            data: { value }
+          });
+        } else {
+          await prisma.customerMemory.create({
+            data: { customerId, key, value }
+          });
+        }
+      } catch (err) {
+        console.error(`[Memory Capture] Failed to update memory for key ${key}:`, err);
+      }
+    };
+
+    try {
+      if (textLower.includes('upi')) {
+        await updateMemory('favorite_payment', 'UPI');
+      } else if (textLower.includes('card') || textLower.includes('credit')) {
+        await updateMemory('favorite_payment', 'Card');
+      } else if (textLower.includes('cash')) {
+        await updateMemory('favorite_payment', 'Cash');
+      }
+
+      if (textLower.includes('morning')) {
+        await updateMemory('preferred_time', 'Morning slots (8 AM - 12 PM)');
+      } else if (textLower.includes('afternoon')) {
+        await updateMemory('preferred_time', 'Afternoon slots (12 PM - 4 PM)');
+      } else if (textLower.includes('evening')) {
+        await updateMemory('preferred_time', 'Evening slots (4 PM - 8 PM)');
+      }
+
+      if (textLower.includes('english')) {
+        await updateMemory('preferred_language', 'English');
+      } else if (textLower.includes('hindi')) {
+        await updateMemory('preferred_language', 'Hindi');
+      } else if (textLower.includes('kannada')) {
+        await updateMemory('preferred_language', 'Kannada');
+      }
+
+      if (textLower.includes('apex')) {
+        await updateMemory('favorite_vendor', 'Apex Pro Services');
+      } else if (textLower.includes('bengaluru express') || textLower.includes('bengaluru premium')) {
+        await updateMemory('favorite_vendor', 'Bengaluru Premium Services');
+      }
+    } catch (err) {
+      console.error('[Memory Extraction Error] Failed to update customer preference memory:', err);
+    }
+  }
+
   /**
    * Processes a multi-turn chat session with history and customer memory integration
    */
@@ -45,6 +103,9 @@ export class AIOrchestrator {
         image: params.image || null,
       },
     });
+
+    // Auto extract and save customer preferences from prompt description
+    await this.extractAndSavePreferences(params.customerId, params.text);
 
     // 2. Fetch Customer Memories
     const memories = await prisma.customerMemory.findMany({

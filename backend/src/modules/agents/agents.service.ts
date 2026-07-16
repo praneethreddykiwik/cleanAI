@@ -1,5 +1,7 @@
 import { prisma } from '@/database';
 import { ModelRegistry } from '@/config/ai/model.registry';
+import * as crypto from 'crypto';
+import { redisService } from '@/config/redis';
 
 export interface JobComplexityResult {
   service: string;
@@ -68,124 +70,250 @@ export class AgentsService {
    * Agent 1: Vision Intelligence Agent
    * Analyzes an uploaded image (base64) & description to estimate complexity metrics
    */
+  private static async saveAIAudit(
+    imageHash: string,
+    promptVersion: string,
+    model: string,
+    complexity: JobComplexityResult
+  ) {
+    try {
+      await prisma.auditLog.create({
+        data: {
+          action: 'CREATE',
+          resource: 'AICache',
+          details: {
+            hash: imageHash,
+            promptVersion,
+            model,
+            complexity: complexity as any,
+            timestamp: new Date().toISOString()
+          } as any
+        }
+      });
+    } catch (e) {
+      console.error('[Vision Cache Error] Failed to write persistent audit log:', e);
+    }
+  }
+
+  private static async validateVisionResult(result: JobComplexityResult): Promise<boolean> {
+    if (!result.service || !result.severity || !result.workersRequired || !result.estimatedDuration) {
+      return false;
+    }
+    const validServices = [
+      'Deep Cleaning', 'Kitchen Cleaning', 'Bathroom Cleaning', 'Sofa Cleaning',
+      'Electrical', 'Plumbing', 'AC Service', 'Pest Control', 'Laundry', 'Gardening', 'Car Wash'
+    ];
+    if (!validServices.includes(result.service)) {
+      return false;
+    }
+    if (result.workersRequired < 1 || result.workersRequired > 10) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Agent 1: Vision Intelligence Agent
+   * Analyzes an uploaded image (base64) & description to estimate complexity metrics
+   */
   static async analyzeJobComplexity(
     imageBufferBase64: string | null,
     userDescription: string,
     inferredService: string = 'Deep Cleaning'
   ): Promise<JobComplexityResult> {
-    const geminiKey = process.env.GEMINI_API_KEY || '';
-    const groqKey = process.env.GROQ_API_KEY || '';
+    const promptVersion = 'v1.0.0';
+    const model = process.env.GROQ_API_KEY ? 'llama-3.2-11b-vision-preview' : 'gemini-2.5-flash';
 
-    if (!geminiKey && !groqKey) {
-      console.log('[Vision Agent] Neither GEMINI_API_KEY nor GROQ_API_KEY is configured. Running high-fidelity simulation...');
-      return this.simulateVisionAnalysis(userDescription, inferredService);
-    }
-
-    const promptText = `
-      Analyze the user's home service request description: "${userDescription}".
-      ${imageBufferBase64 ? 'Analyze the uploaded service location photo.' : ''}
-      Identify the service category, identify severity of cleaning/repair needed, detect objects, assess structural/damage levels, and suggest duration/workers.
+    let imageHash = '';
+    if (imageBufferBase64) {
+      imageHash = crypto.createHash('sha256').update(imageBufferBase64).digest('hex');
       
-      You MUST respond ONLY with a valid raw JSON object matching the following TypeScript interface:
-      interface JobComplexityResult {
-        service: string; // The service name matching one of: 'Deep Cleaning', 'Kitchen Cleaning', 'Bathroom Cleaning', 'Sofa Cleaning', 'Electrical', 'Plumbing', 'AC Service', 'Pest Control', 'Laundry', 'Gardening', 'Car Wash'
-        subcategory: string; // Specific item or room area e.g. "Kitchen Cabinets", "Bathroom Tiles", "Living Room Sofa"
-        confidence: number; // Float between 0.0 and 1.0 representing classification confidence
-        severity: 'Very Low' | 'Low' | 'Medium' | 'High' | 'Critical'; // Job severity level
-        estimatedDuration: string; // Estimated time e.g. "3 Hours", "5 Hours"
-        workersRequired: number; // Suggested number of technicians
-        difficulty: 'Very Low' | 'Low' | 'Medium' | 'High' | 'Critical'; // Job difficulty
-        objectsDetected: string[]; // Specific items or problems seen/described e.g. ["grease", "stains", "leaking pipe", "loose wiring"]
-        damageLevel: string; // e.g. "Low", "Medium", "High"
-        recommendedTools: string[]; // e.g. ["Steam Cleaner", "Screwdriver", "Multimeter"]
-      }
-    `;
-
-    if (groqKey) {
-      const provider = ModelRegistry.getProvider();
+      // 1. Try to fetch from Redis
       try {
-        let result: any;
-        if (imageBufferBase64) {
-          result = await provider.analyzeImage(imageBufferBase64);
-        } else {
-          const textResult = await provider.generateText(promptText);
-          result = this.parseLLMJson(textResult);
+        const cached = await redisService.get<JobComplexityResult>(`ai:vision:${imageHash}`);
+        if (cached) {
+          console.log('[Vision Cache] Cache hit in Redis for image hash:', imageHash);
+          return cached;
         }
-        return {
-          service: result.service || inferredService,
-          subcategory: result.subcategory || 'General Area',
-          confidence: result.confidence || 0.88,
-          severity: result.severity || 'Medium',
-          estimatedDuration: result.estimatedDuration || '2 Hours',
-          workersRequired: result.workersRequired || 1,
-          difficulty: result.difficulty || 'Medium',
-          objectsDetected: result.objectsDetected || ['Surface dust'],
-          damageLevel: result.damageLevel || 'Low',
-          recommendedTools: result.recommendedTools || ['Basic cleaner'],
-        };
       } catch (err) {
-        console.error('[Vision Agent Error] Groq API fail, running simulation:', err);
-        return this.simulateVisionAnalysis(userDescription, inferredService);
+        console.error('[Vision Cache Error] Redis lookup failed:', err);
+      }
+
+      // 2. Try to fetch from Postgres
+      try {
+        const dbLog = await prisma.auditLog.findFirst({
+          where: {
+            resource: 'AICache',
+            details: {
+              path: ['hash'],
+              equals: imageHash
+            }
+          }
+        });
+        if (dbLog && dbLog.details) {
+          const details: any = dbLog.details;
+          if (details.complexity) {
+            console.log('[Vision Cache] Cache hit in Postgres for image hash:', imageHash);
+            // Re-cache in Redis
+            await redisService.set(`ai:vision:${imageHash}`, details.complexity, 604800); // 7 days
+            return details.complexity;
+          }
+        }
+      } catch (err) {
+        console.error('[Vision Cache Error] Postgres lookup failed:', err);
       }
     }
 
-    const apiKey = geminiKey;
-    try {
-      let contents: any[] = [];
-      if (imageBufferBase64) {
-        let mimeType = 'image/jpeg';
-        let data = imageBufferBase64;
-        if (imageBufferBase64.includes(';base64,')) {
-          const parts = imageBufferBase64.split(';base64,');
-          mimeType = parts[0].replace('data:', '');
-          data = parts[1];
-        }
+    // Call LLM (with retries/validation)
+    let attempts = 0;
+    const maxAttempts = 2;
+    let finalResult: JobComplexityResult | null = null;
 
-        contents = [
-          {
-            parts: [
-              { text: promptText },
-              {
-                inlineData: {
-                  mimeType,
-                  data,
+    while (attempts < maxAttempts) {
+      attempts++;
+      try {
+        let result: JobComplexityResult;
+        const geminiKey = process.env.GEMINI_API_KEY || '';
+        const groqKey = process.env.GROQ_API_KEY || '';
+
+        if (!geminiKey && !groqKey) {
+          console.log('[Vision Agent] Neither GEMINI_API_KEY nor GROQ_API_KEY is configured. Running high-fidelity simulation...');
+          result = await this.simulateVisionAnalysis(userDescription, inferredService);
+        } else {
+          const promptText = `
+            Analyze the user's home service request description: "${userDescription}".
+            ${imageBufferBase64 ? 'Analyze the uploaded service location photo.' : ''}
+            Identify the service category, identify severity of cleaning/repair needed, detect objects, assess structural/damage levels, and suggest duration/workers.
+            
+            You MUST respond ONLY with a valid raw JSON object matching the following TypeScript interface:
+            interface JobComplexityResult {
+              service: string; // The service name matching one of: 'Deep Cleaning', 'Kitchen Cleaning', 'Bathroom Cleaning', 'Sofa Cleaning', 'Electrical', 'Plumbing', 'AC Service', 'Pest Control', 'Laundry', 'Gardening', 'Car Wash'
+              subcategory: string; // Specific item or room area e.g. "Kitchen Cabinets", "Bathroom Tiles", "Living Room Sofa"
+              confidence: number; // Float between 0.0 and 1.0 representing classification classification confidence
+              severity: 'Very Low' | 'Low' | 'Medium' | 'High' | 'Critical'; // Job severity level
+              estimatedDuration: string; // Estimated time e.g. "3 Hours", "5 Hours"
+              workersRequired: number; // Suggested number of technicians
+              difficulty: 'Very Low' | 'Low' | 'Medium' | 'High' | 'Critical'; // Job difficulty
+              objectsDetected: string[]; // Specific items or problems seen/described e.g. ["grease", "stains", "leaking pipe", "loose wiring"]
+              damageLevel: string; // e.g. "Low", "Medium", "High"
+              recommendedTools: string[]; // e.g. ["Steam Cleaner", "Screwdriver", "Multimeter"]
+            }
+          `;
+
+          if (groqKey) {
+            const provider = ModelRegistry.getProvider();
+            let rawResult: any;
+            if (imageBufferBase64) {
+              rawResult = await provider.analyzeImage(imageBufferBase64);
+            } else {
+              const textResult = await provider.generateText(promptText);
+              rawResult = this.parseLLMJson(textResult);
+            }
+            result = {
+              service: rawResult.service || inferredService,
+              subcategory: rawResult.subcategory || 'General Area',
+              confidence: rawResult.confidence || 0.88,
+              severity: rawResult.severity || 'Medium',
+              estimatedDuration: rawResult.estimatedDuration || '2 Hours',
+              workersRequired: rawResult.workersRequired || 1,
+              difficulty: rawResult.difficulty || 'Medium',
+              objectsDetected: rawResult.objectsDetected || ['Surface dust'],
+              damageLevel: rawResult.damageLevel || 'Low',
+              recommendedTools: rawResult.recommendedTools || ['Basic cleaner'],
+            };
+          } else {
+            const apiKey = geminiKey;
+            let contents: any[] = [];
+            if (imageBufferBase64) {
+              let mimeType = 'image/jpeg';
+              let data = imageBufferBase64;
+              if (imageBufferBase64.includes(';base64,')) {
+                const parts = imageBufferBase64.split(';base64,');
+                mimeType = parts[0].replace('data:', '');
+                data = parts[1];
+              }
+
+              contents = [
+                {
+                  parts: [
+                    { text: promptText },
+                    {
+                      inlineData: {
+                        mimeType,
+                        data,
+                      },
+                    },
+                  ],
                 },
-              },
-            ],
-          },
-        ];
-      } else {
-        contents = [
-          {
-            parts: [{ text: promptText }],
-          },
-        ];
-      }
+              ];
+            } else {
+              contents = [
+                {
+                  parts: [{ text: promptText }],
+                },
+              ];
+            }
 
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents,
-            generationConfig: {
-              responseMimeType: 'application/json',
-            },
-          }),
+            const response = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents,
+                  generationConfig: {
+                    responseMimeType: 'application/json',
+                  },
+                }),
+              }
+            );
+
+            const responseData: any = await response.json();
+            const responseText = responseData?.candidates?.[0]?.content?.parts?.[0]?.text;
+            const parsed = this.parseLLMJson(responseText);
+            result = {
+              service: parsed.service || inferredService,
+              subcategory: parsed.subcategory || 'General Area',
+              confidence: parsed.confidence || 0.88,
+              severity: parsed.severity || 'Medium',
+              estimatedDuration: parsed.estimatedDuration || '2 Hours',
+              workersRequired: parsed.workersRequired || 1,
+              difficulty: parsed.difficulty || 'Medium',
+              objectsDetected: parsed.objectsDetected || ['Surface dust'],
+              damageLevel: parsed.damageLevel || 'Low',
+              recommendedTools: parsed.recommendedTools || ['Basic cleaner'],
+            };
+          }
         }
-      );
 
-      const responseData: any = await response.json();
-      const responseText = responseData?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (responseText) {
-        return this.parseLLMJson(responseText) as JobComplexityResult;
+        // Validation Agent Check
+        const isValid = await this.validateVisionResult(result);
+        if (isValid) {
+          finalResult = result;
+          break;
+        } else {
+          console.warn(`[Validation Agent] Attempt ${attempts} failed validation check.`);
+        }
+      } catch (err) {
+        console.error(`[Vision Agent] Attempt ${attempts} failed with error:`, err);
       }
-      throw new Error('Empty response from Gemini API');
-    } catch (e: any) {
-      console.error('[Vision Agent Error] Gemini request failed:', e.message);
-      return this.simulateVisionAnalysis(userDescription, inferredService);
     }
+
+    if (!finalResult) {
+      throw new Error('AI analysis validation failed after multiple retry attempts.');
+    }
+
+    // Cache results if image is present
+    if (imageHash) {
+      try {
+        await redisService.set(`ai:vision:${imageHash}`, finalResult, 604800); // 7 days
+        await this.saveAIAudit(imageHash, promptVersion, model, finalResult);
+      } catch (err) {
+        console.error('[Vision Cache Error] Failed to cache results:', err);
+      }
+    }
+
+    return finalResult;
   }
 
   /**
@@ -197,21 +325,32 @@ export class AgentsService {
     isWeekend: boolean = false,
     city: string = 'Bengaluru'
   ): Promise<PriceEstimationBreakdown> {
+    const cleanNum = (val: any, defaultVal = 0): number => {
+      if (val === undefined || val === null || typeof val !== 'number' || Number.isNaN(val) || !Number.isFinite(val)) {
+        return defaultVal;
+      }
+      return val;
+    };
+
+    if (!complexity) {
+      throw new Error('Pricing calculation failed: complexity payload is null or undefined');
+    }
+
     // 1. Fetch base price of the service from the DB
     const serviceRecord = await prisma.service.findFirst({
       where: {
         name: {
-          contains: complexity.service,
+          contains: complexity.service || 'Deep Cleaning',
           mode: 'insensitive',
         },
       },
     });
 
-    const basePrice = serviceRecord ? serviceRecord.basePrice : 499;
+    const basePrice = cleanNum(serviceRecord ? serviceRecord.basePrice : 499, 499);
 
     // 2. City Multiplier
     let cityMultiplier = 1.0;
-    const cityLower = city.toLowerCase();
+    const cityLower = (city || 'Bengaluru').toLowerCase();
     if (cityLower.includes('mumbai')) {
       cityMultiplier = 1.15;
     } else if (cityLower.includes('delhi')) {
@@ -221,28 +360,31 @@ export class AgentsService {
     } else if (cityLower.includes('bengaluru') || cityLower.includes('bangalore')) {
       cityMultiplier = 1.05;
     }
+    cityMultiplier = cleanNum(cityMultiplier, 1.0);
 
     // 3. Hour of Day Demand Multiplier
-    const hour = new Date().getHours();
-    const demandMultiplier = (hour >= 21 || hour < 6) ? 1.25 : 1.05;
+    const hour = cleanNum(new Date().getHours(), 12);
+    const demandMultiplier = cleanNum((hour >= 21 || hour < 6) ? 1.25 : 1.05, 1.05);
 
     // 4. Severity Multiplier
     let severityFee = 0;
-    if (complexity.severity === 'Critical') {
+    const severity = complexity.severity || 'Medium';
+    if (severity === 'Critical') {
       severityFee = basePrice * 0.70;
-    } else if (complexity.severity === 'High') {
+    } else if (severity === 'High') {
       severityFee = basePrice * 0.35;
-    } else if (complexity.severity === 'Medium') {
+    } else if (severity === 'Medium') {
       severityFee = basePrice * 0.15;
-    } else if (complexity.severity === 'Low') {
+    } else if (severity === 'Low') {
       severityFee = basePrice * -0.10;
-    } else if (complexity.severity === 'Very Low') {
+    } else if (severity === 'Very Low') {
       severityFee = basePrice * -0.20;
     }
+    severityFee = cleanNum(severityFee, 0);
 
     // 5. Area Multiplier
     let areaMultiplier = 1.0;
-    const subcategoryLower = complexity.subcategory.toLowerCase();
+    const subcategoryLower = (complexity.subcategory || 'General Area').toLowerCase();
     if (subcategoryLower.includes('warehouse')) {
       areaMultiplier = 2.5;
     } else if (subcategoryLower.includes('villa') || subcategoryLower.includes('restaurant')) {
@@ -252,11 +394,12 @@ export class AgentsService {
     } else if (subcategoryLower.includes('large')) {
       areaMultiplier = 1.25;
     }
+    areaMultiplier = cleanNum(areaMultiplier, 1.0);
 
     // 6. Surcharges & Charges
-    const weekendSurcharge = isWeekend ? Math.round(basePrice * 0.10) : 0;
-    const nightCharge = (hour >= 21 || hour < 6) ? 150 : 0;
-    const holidayCharge = (new Date().getMonth() === 11 || new Date().getMonth() === 0) ? 100 : 0; // Holiday surge during Dec/Jan
+    const weekendSurcharge = cleanNum(isWeekend ? Math.round(basePrice * 0.10) : 0, 0);
+    const nightCharge = cleanNum((hour >= 21 || hour < 6) ? 150 : 0, 0);
+    const holidayCharge = cleanNum((new Date().getMonth() === 11 || new Date().getMonth() === 0) ? 100 : 0, 0); // Holiday surge during Dec/Jan
     const travelFee = 75; // Default travel expense allocation
 
     // 7. Calculate range bounds
@@ -275,20 +418,43 @@ export class AgentsService {
     const totalMin = Math.round(subtotal + platformFee + taxes);
     const totalMax = Math.round(totalMin * 1.25); // 25% complexity margin
 
+    const finalBasePrice = cleanNum(basePrice, 499);
+    const finalCityMultiplier = cleanNum(cityMultiplier, 1.0);
+    const finalDemandMultiplier = cleanNum(demandMultiplier, 1.05);
+    const finalSeverityFee = Math.round(cleanNum(severityFee, 0));
+    const finalAreaMultiplier = cleanNum(areaMultiplier, 1.0);
+    const finalWeekendSurcharge = cleanNum(weekendSurcharge, 0);
+    const finalNightCharge = cleanNum(nightCharge, 0);
+    const finalHolidayCharge = cleanNum(holidayCharge, 0);
+    const finalTravelFee = cleanNum(travelFee, 75);
+    const finalTaxes = cleanNum(taxes, 0);
+    const finalPlatformFee = cleanNum(platformFee, 0);
+    const finalTotalMin = cleanNum(totalMin, 0);
+    const finalTotalMax = cleanNum(totalMax, 0);
+
+    if (
+      Number.isNaN(finalTotalMin) || 
+      Number.isNaN(finalTotalMax) || 
+      !Number.isFinite(finalTotalMin) || 
+      !Number.isFinite(finalTotalMax)
+    ) {
+      throw new Error('Pricing calculation output is NaN or Infinite.');
+    }
+
     return {
-      basePrice,
-      cityMultiplier,
-      demandMultiplier,
-      severityFee: Math.round(severityFee),
-      areaMultiplier,
-      weekendSurcharge,
-      nightCharge,
-      holidayCharge,
-      travelFee,
-      taxes,
-      platformFee,
-      totalMin,
-      totalMax,
+      basePrice: finalBasePrice,
+      cityMultiplier: finalCityMultiplier,
+      demandMultiplier: finalDemandMultiplier,
+      severityFee: finalSeverityFee,
+      areaMultiplier: finalAreaMultiplier,
+      weekendSurcharge: finalWeekendSurcharge,
+      nightCharge: finalNightCharge,
+      holidayCharge: finalHolidayCharge,
+      travelFee: finalTravelFee,
+      taxes: finalTaxes,
+      platformFee: finalPlatformFee,
+      totalMin: finalTotalMin,
+      totalMax: finalTotalMax,
     };
   }
 
@@ -400,7 +566,7 @@ export class AgentsService {
       };
     });
 
-    return scored.sort((a, b) => b.matchScore - a.matchScore);
+    return scored.sort((a, b) => b.matchScore - a.matchScore).slice(0, 5);
   }
 
   /**

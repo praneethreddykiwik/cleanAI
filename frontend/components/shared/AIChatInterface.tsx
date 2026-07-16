@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
-import { Sparkles, Send, Upload, User, Loader2, Compass, AlertCircle, Wrench, CheckCircle2, ChevronRight } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Sparkles, Send, Upload, User, Loader2, Compass, AlertCircle, Wrench, CheckCircle2, ChevronRight, Camera, RefreshCw, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiCall } from '@/lib/api';
 import { cn, formatCurrency } from '@/lib/utils';
@@ -53,8 +53,148 @@ export function AIChatInterface({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Camera states
+  const [showCamera, setShowCamera] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // Image compression utility
+  const compressImage = (base64Str: string, maxWidth = 800, maxHeight = 800): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64Str;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.onerror = () => resolve(base64Str);
+    });
+  };
+
+  // Upload to Cloudinary helper
+  const uploadImageToCloudinary = async (base64Str: string): Promise<string> => {
+    try {
+      const compressed = await compressImage(base64Str);
+      const res = await apiCall('/users/upload', {
+        method: 'POST',
+        body: JSON.stringify({ fileContent: compressed }),
+      });
+      if (res.success && res.data?.url) {
+        return res.data.url;
+      }
+    } catch (err) {
+      console.error('Cloudinary upload failure, falling back to base64:', err);
+    }
+    return base64Str;
+  };
+
+  // Clipboard paste listener
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const file = e.clipboardData?.files?.[0];
+      if (file && file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setSelectedImage(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+        toast.success('Image pasted from clipboard.');
+      }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, []);
+
+  // Drag & Drop handlers
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer?.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setSelectedImage(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+      toast.success('Image dropped successfully.');
+    }
+  };
+
+  // Camera functions
+  const startCamera = async () => {
+    try {
+      if (cameraStream) stopCamera();
+      const constraints = {
+        video: { facingMode: facingMode }
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setCameraStream(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      setShowCamera(true);
+    } catch (err) {
+      console.error('Camera access failed:', err);
+      toast.error('Could not access camera. Please check permissions.');
+    }
+  };
+
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+    setShowCamera(false);
+  };
+
+  const switchCamera = () => {
+    const newMode = facingMode === 'user' ? 'environment' : 'user';
+    setFacingMode(newMode);
+    // Restart camera with new facing mode
+    setTimeout(() => {
+      if (showCamera) startCamera();
+    }, 100);
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg');
+      setSelectedImage(dataUrl);
+      stopCamera();
+      toast.success('Photo captured successfully.');
+    }
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -71,6 +211,15 @@ export function AIChatInterface({
   const handleSend = async () => {
     if (!inputText.trim() && !selectedImage) return;
 
+    setIsLoading(true);
+    setAgentStatus('Supervisor Agent: Coordinating workflows...');
+    
+    // Upload image to Cloudinary first if present
+    let imageUrl = '';
+    if (selectedImage) {
+      imageUrl = await uploadImageToCloudinary(selectedImage);
+    }
+
     const userMsgId = Math.random().toString(36).substring(7);
     const userMessage: Message = {
       id: userMsgId,
@@ -81,11 +230,8 @@ export function AIChatInterface({
 
     setMessages((prev) => [...prev, userMessage]);
     const currentInput = inputText;
-    const currentImage = selectedImage;
     setInputText('');
     setSelectedImage(null);
-    setIsLoading(true);
-    setAgentStatus('Supervisor Agent: Coordinating workflows...');
     setTimeout(scrollToBottom, 50);
 
     try {
@@ -94,7 +240,7 @@ export function AIChatInterface({
         method: 'POST',
         body: JSON.stringify({
           text: currentInput,
-          image: currentImage,
+          image: imageUrl || null,
           conversationId,
           serviceName,
           latitude,
@@ -193,7 +339,7 @@ export function AIChatInterface({
   };
 
   return (
-    <div className="flex flex-col h-[480px] bg-card border border-border/50 rounded-2xl overflow-hidden shadow-xl z-20">
+    <div onDragOver={handleDragOver} onDrop={handleDrop} className="flex flex-col h-[480px] bg-card border border-border/50 rounded-2xl overflow-hidden shadow-xl z-20 relative">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-indigo-500/10 to-primary/5 border-b border-border/30">
         <div className="flex items-center gap-2">
@@ -453,6 +599,29 @@ export function AIChatInterface({
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Camera Capture View Overlay */}
+      {showCamera && (
+        <div className="absolute inset-0 bg-black/95 z-50 flex flex-col items-center justify-between p-4">
+          <div className="w-full flex justify-between items-center text-white">
+            <span className="text-xs font-bold">Camera Capture</span>
+            <button onClick={stopCamera} className="p-1 hover:bg-white/10 rounded-full">
+              <X size={18} />
+            </button>
+          </div>
+          <div className="relative w-full max-h-[300px] flex items-center justify-center overflow-hidden rounded-xl bg-neutral-900 border border-neutral-800">
+            <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+            <canvas ref={canvasRef} className="hidden" />
+          </div>
+          <div className="flex items-center gap-6 pb-2">
+            <button onClick={switchCamera} className="p-2.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-full transition-colors">
+              <RefreshCw size={16} />
+            </button>
+            <button onClick={capturePhoto} className="w-12 h-12 bg-white hover:bg-neutral-200 border-4 border-neutral-700 rounded-full transition-transform active:scale-95" />
+            <div className="w-10" /> {/* Spacer */}
+          </div>
+        </div>
+      )}
+
       {/* Input Dock */}
       <div className="p-3 border-t border-border/30 bg-card space-y-2">
         {selectedImage && (
@@ -484,6 +653,16 @@ export function AIChatInterface({
             className="rounded-full w-9 h-9 p-0 flex items-center justify-center shrink-0 border-border/60 hover:bg-muted"
           >
             <Upload size={14} className="text-muted-foreground/80" />
+          </Button>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            onClick={startCamera}
+            className="rounded-full w-9 h-9 p-0 flex items-center justify-center shrink-0 border-border/60 hover:bg-muted"
+          >
+            <Camera size={14} className="text-muted-foreground/80" />
           </Button>
 
           <input

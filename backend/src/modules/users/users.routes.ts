@@ -1,8 +1,29 @@
 import { Router, Response } from 'express';
 import { authMiddleware, AuthenticatedRequest } from '@/middleware/auth';
 import { prisma } from '@/database';
+import { MediaStorageService } from '@/config/cloudinary';
 
 export const userRoutes = Router();
+
+// Expose direct media upload endpoint to Cloudinary
+userRoutes.post('/upload', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { fileContent } = req.body;
+    if (!fileContent) {
+      return res.status(400).json({ success: false, message: 'Missing fileContent in request body' });
+    }
+    const uploadResult = await MediaStorageService.uploadFile(fileContent, 'cleanai_uploads');
+    res.status(200).json({
+      success: true,
+      data: {
+        url: uploadResult.url,
+        publicId: uploadResult.publicId
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message || 'File upload failed' });
+  }
+});
 
 // Profile info query
 userRoutes.get('/me', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {

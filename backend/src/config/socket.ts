@@ -41,11 +41,11 @@ export class SocketService {
           return next(new Error('Authentication failed: Missing token.'));
         }
 
-        const decoded = jwt.verify(token, env.JWT_SECRET) as DecodedToken;
+        const decoded = jwt.verify(token, env.JWT_SECRET) as any;
         socket.data = {
-          userId: decoded.id,
+          userId: decoded.sub || decoded.id,
           role: decoded.role,
-          email: decoded.email,
+          email: decoded.email || '',
         };
         next();
       } catch (err) {
