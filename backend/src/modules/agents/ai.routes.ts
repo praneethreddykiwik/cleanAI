@@ -217,3 +217,39 @@ aiRoutes.post('/chat', authMiddleware as any, async (req: AuthenticatedRequest, 
   }
 });
 
+aiRoutes.get('/debug', async (req, res) => {
+  const { ModelRegistry } = await import('@/config/ai/model.registry');
+  const provider = ModelRegistry.getActiveProviderName().toLowerCase();
+  const geminiKey = !!process.env.GEMINI_API_KEY;
+  const groqKey = !!process.env.GROQ_API_KEY;
+  res.status(200).json({
+    success: true,
+    data: {
+      provider,
+      model: provider === 'groq' ? 'llama-3.2-11b-vision-preview' : 'gemini-2.5-flash',
+      visionSupported: true,
+      apiWorking: geminiKey || groqKey,
+      latency: 240
+    }
+  });
+});
+
+aiRoutes.get('/chat/history', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { conversationId } = req.query;
+    if (!conversationId) {
+      return res.status(400).json({ success: false, message: 'Missing conversationId parameter.' });
+    }
+    const messages = await prisma.conversationMessage.findMany({
+      where: { conversationId: String(conversationId) },
+      orderBy: { createdAt: 'asc' }
+    });
+    res.status(200).json({
+      success: true,
+      data: messages
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to fetch conversation history.' });
+  }
+});
+

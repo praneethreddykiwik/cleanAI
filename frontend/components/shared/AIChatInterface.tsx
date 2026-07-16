@@ -112,7 +112,7 @@ export function AIChatInterface({
     return base64Str;
   };
 
-  // Clipboard paste & Socket progress listener
+  // Clipboard paste, Socket progress, and Conversation history restore listener
   useEffect(() => {
     // 1. Setup clipboard listener
     const handlePaste = (e: ClipboardEvent) => {
@@ -139,6 +139,30 @@ export function AIChatInterface({
       });
     } catch (err) {
       console.warn('Failed to bind socket progression listener:', err);
+    }
+
+    // 3. Load chat history if conversation ID exists in localStorage
+    try {
+      const savedConvId = localStorage.getItem('cleanai_conversation_id');
+      if (savedConvId) {
+        setConversationId(savedConvId);
+        apiCall(`/ai/chat/history?conversationId=${savedConvId}`)
+          .then((res: any) => {
+            if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+              setMessages(res.data.map((m: any) => ({
+                id: m.id,
+                sender: m.sender,
+                text: m.text,
+                image: m.image || undefined,
+              })));
+            }
+          })
+          .catch((err) => {
+            console.error('Failed to load saved chat history:', err);
+          });
+      }
+    } catch (err) {
+      // Safe skip
     }
 
     return () => {
@@ -303,16 +327,9 @@ export function AIChatInterface({
       }
 
       const { conversationId: newConvId, assistantText, stage, timelineLogs, complexity, pricing, vendors } = response.data;
-      setConversationId(newConvId);
-
-      // Simulate multi-turn agent timeline updates if pipeline executed
-      if (stage === 'ANALYSIS_COMPLETE') {
-        setAgentStatus('Vision Agent: Analyzing complexity details...');
-        await new Promise((resolve) => setTimeout(resolve, 600));
-        setAgentStatus('Pricing Agent: Calculating cost breakdown...');
-        await new Promise((resolve) => setTimeout(resolve, 600));
-        setAgentStatus('Vendor Matching Agent: Searching active providers...');
-        await new Promise((resolve) => setTimeout(resolve, 600));
+      if (newConvId) {
+        setConversationId(newConvId);
+        localStorage.setItem('cleanai_conversation_id', newConvId);
       }
 
       const assistantMsgId = Math.random().toString(36).substring(7);
