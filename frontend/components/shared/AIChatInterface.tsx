@@ -47,6 +47,7 @@ export function AIChatInterface({
       text: `Hi Vivek 👋 I'm Criska AI, your home services operating system.\n\nTell me what is happening at your home today. You can:\n• Describe the problem\n• Upload photos`,
     },
   ]);
+  const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
   const [inputText, setInputText] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -163,6 +164,22 @@ export function AIChatInterface({
       }
     } catch (err) {
       // Safe skip
+    }
+
+    // 4. Load browser GPS coordinates if not passed from parent
+    if (!latitude && !longitude && typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setGpsCoords({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          });
+        },
+        (err) => {
+          console.warn('[AIChatInterface GPS] Browser geolocator failed:', err);
+        },
+        { enableHighAccuracy: true, timeout: 5000 }
+      );
     }
 
     return () => {
@@ -317,8 +334,8 @@ export function AIChatInterface({
           image: imageUrl || null,
           conversationId,
           serviceName,
-          latitude,
-          longitude,
+          latitude: latitude || gpsCoords?.lat || 12.9716,
+          longitude: longitude || gpsCoords?.lng || 77.5946,
         }),
       });
 

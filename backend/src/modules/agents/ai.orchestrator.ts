@@ -242,6 +242,7 @@ export class AIOrchestrator {
       const provider = ModelRegistry.getProvider();
       const explanationPrompt = `
         You are the CleanAI Supervisor Agent. Explain the reasoning for the job complexity assessment to the user.
+        ${memoryContextString}
         User request: "${params.text}"
         Detected Service: "${complexity.service}"
         Detected Subcategory: "${complexity.subcategory}"
