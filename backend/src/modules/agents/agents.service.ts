@@ -577,30 +577,45 @@ export class AgentsService {
     });
 
     // Score and sort matches based on rating, coordinates distance, workload and free agents
-    const scored = activeVendors.map((vendor) => {
-      const coords = VENDOR_COORDINATES[vendor.user?.email || ''];
-      let distanceKm = 1.5;
-      let etaMinutes = 15;
+    const radii = [15, 30, 50, 100];
+    let matchedVendors: any[] = [];
+    let activeRadius = 15;
 
-      if (params.latitude && params.longitude && coords) {
-        // Calculate actual distance (Haversine formula)
-        const R = 6371; // Earth radius in km
-        const dLat = (coords.lat - params.latitude) * Math.PI / 180;
-        const dLng = (coords.lng - params.longitude) * Math.PI / 180;
-        const a = 
-          Math.sin(dLat/2) * Math.sin(dLat/2) +
-          Math.cos(params.latitude * Math.PI / 180) * Math.cos(coords.lat * Math.PI / 180) * 
-          Math.sin(dLng/2) * Math.sin(dLng/2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        distanceKm = Math.round(R * c * 10) / 10;
-        etaMinutes = Math.round((distanceKm / 22) * 60 + 10); // Assume average city traffic speed of 22 km/h
-      } else {
-        distanceKm = Math.round((1.0 + (vendor.businessName.length % 5) * 0.8) * 10) / 10;
-        etaMinutes = Math.round(distanceKm * 4 + 10);
+    for (const r of radii) {
+      activeRadius = r;
+      matchedVendors = activeVendors.map((vendor) => {
+        const coords = VENDOR_COORDINATES[vendor.user?.email || ''];
+        let distanceKm = 1.5;
+        let etaMinutes = 15;
+
+        if (params.latitude && params.longitude && coords) {
+          // Calculate actual distance (Haversine formula)
+          const R = 6371; // Earth radius in km
+          const dLat = (coords.lat - params.latitude) * Math.PI / 180;
+          const dLng = (coords.lng - params.longitude) * Math.PI / 180;
+          const a = 
+            Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(params.latitude * Math.PI / 180) * Math.cos(coords.lat * Math.PI / 180) * 
+            Math.sin(dLng/2) * Math.sin(dLng/2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          distanceKm = Math.round(R * c * 10) / 10;
+          etaMinutes = Math.round((distanceKm / 22) * 60 + 10); // Assume average city traffic speed of 22 km/h
+        } else {
+          distanceKm = Math.round((1.0 + (vendor.businessName.length % 5) * 0.8) * 10) / 10;
+          etaMinutes = Math.round(distanceKm * 4 + 10);
+        }
+
+        return { vendor, distanceKm, etaMinutes };
+      }).filter(item => item.distanceKm <= activeRadius);
+
+      if (matchedVendors.length > 0) {
+        break;
       }
+    }
 
-      const availableAgents = vendor.agents.filter(a => a.status === 'AVAILABLE').length;
-      const busyAgents = vendor.agents.filter(a => a.status === 'BUSY').length;
+    const scored = matchedVendors.map(({ vendor, distanceKm, etaMinutes }) => {
+      const availableAgents = vendor.agents.filter((a: any) => a.status === 'AVAILABLE').length;
+      const busyAgents = vendor.agents.filter((a: any) => a.status === 'BUSY').length;
 
       // Acceptance Rate: Dynamic calculation derived from completed jobs and rating
       const acceptanceRate = Math.min(100, Math.round(85 + (vendor.rating % 1) * 15));
