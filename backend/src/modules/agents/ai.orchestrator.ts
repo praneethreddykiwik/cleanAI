@@ -127,6 +127,13 @@ export class AIOrchestrator {
       orderBy: { createdAt: 'asc' },
     });
 
+    let historyContextString = '';
+    if (historyMessages.length > 0) {
+      historyContextString = '\nPrevious Conversation History:\n' + historyMessages.map(m => {
+        return `- ${m.sender === 'user' ? 'Customer' : 'AI'}: ${m.text}`;
+      }).join('\n');
+    }
+
     const descLower = params.text.toLowerCase();
     const hasImage = !!params.image;
 
@@ -243,6 +250,7 @@ export class AIOrchestrator {
       const explanationPrompt = `
         You are the CleanAI Supervisor Agent. Explain the reasoning for the job complexity assessment to the user.
         ${memoryContextString}
+        ${historyContextString}
         User request: "${params.text}"
         Detected Service: "${complexity.service}"
         Detected Subcategory: "${complexity.subcategory}"
