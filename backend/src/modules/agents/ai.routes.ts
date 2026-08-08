@@ -18,7 +18,19 @@ aiRoutes.post('/analyze-job', authMiddleware as any, async (req: AuthenticatedRe
       return res.status(400).json({ success: false, message: 'Please provide a job description.' });
     }
 
-    // 1. Run Vision Agent (Agent 1)
+    // Guard: fail immediately if no AI key — do not simulate
+    const { ModelRegistry } = await import('@/config/ai/model.registry');
+    if (!ModelRegistry.isConfigured()) {
+      return res.status(503).json({
+        success: false,
+        message: 'AI_NOT_CONFIGURED',
+        detail: 'Real AI analysis requires GEMINI_API_KEY or GROQ_API_KEY in backend/.env. ' +
+                'Get a free Groq key at https://console.groq.com/keys and restart the server.',
+        currentMode: 'unconfigured',
+      });
+    }
+
+    // 1. Run Vision Agent (Agent 1) — real API call, throws on failure
     const complexity = await AgentsService.analyzeJobComplexity(image || null, description, serviceName);
 
     // 2. Run deterministic Pricing Engine
@@ -29,10 +41,18 @@ aiRoutes.post('/analyze-job', authMiddleware as any, async (req: AuthenticatedRe
       data: {
         complexity,
         priceBreakdown,
+        aiProvider: ModelRegistry.getActiveProviderName(),
+        mode: 'live',
       },
     });
   } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message || 'AI job analysis failed' });
+    // Surface AI errors clearly — never swallow into a generic 500
+    const isAiNotConfigured = error?.message?.includes('AI_NOT_CONFIGURED') || error?.message?.includes('not configured');
+    res.status(isAiNotConfigured ? 503 : 500).json({
+      success: false,
+      message: error.message || 'AI job analysis failed',
+      mode: 'error',
+    });
   }
 });
 
@@ -82,18 +102,7 @@ async function getOrCreateCustomer(userId: string) {
         },
       });
 
-      // Seed initial customer memories so the agent has past context to remember!
-      try {
-        await prisma.customerMemory.createMany({
-          data: [
-            { customerId: customer.id, key: 'favorite_service', value: 'Kitchen Cleaning' },
-            { customerId: customer.id, key: 'favorite_technician', value: 'Suresh Singh' },
-            { customerId: customer.id, key: 'preferred_time', value: 'Saturday morning' },
-          ]
-        });
-      } catch (err) {
-        console.error('Failed to seed memory:', err);
-      }
+      // New customers start with no memory — preferences are learned from actual bookings
     }
   }
   return customer;
@@ -132,8 +141,8 @@ aiRoutes.post('/support', authMiddleware as any, async (req: AuthenticatedReques
 
     if (image) {
       const result = await AgentsService.analyzeJobComplexity(image, `User reported issue: "${issueDescription}" for service: "${booking.service.name}". Verify if work looks incomplete or damaged.`);
-      aiAnalysis = `AI Vision Verification: Detected objects: ${result.objectsDetected.join(', ')}. Indicated severity: ${result.severity}. Recommend tools: ${result.recommendedTools.join(', ')}.`;
-      if (result.severity === 'High') {
+      aiAnalysis = `AI Vision Verification: Detected objects: ${result.objectsDetected.join(', ')}. Indicated severity: ${result.severityLabel || result.starRating}. Recommend equipment: ${result.recommendedEquipment.join(', ')}.`;
+      if (result.starRating && result.starRating >= 4) {
         isSevereIssue = true;
       }
     }
@@ -197,9 +206,13 @@ aiRoutes.post('/chat', authMiddleware as any, async (req: AuthenticatedRequest, 
 
     const { text, image, conversationId, serviceName, latitude, longitude } = req.body;
 
+    // Load user's first name for personalised greeting
+    const userRecord = await prisma.user.findUnique({ where: { id: userId }, select: { firstName: true } });
+
     const result = await AIOrchestrator.handleChatSession({
       userId,
       customerId: customer.id,
+      customerFirstName: userRecord?.firstName || 'there',
       text: text || '',
       image: image || null,
       conversationId: conversationId || null,
@@ -217,20 +230,47 @@ aiRoutes.post('/chat', authMiddleware as any, async (req: AuthenticatedRequest, 
   }
 });
 
-aiRoutes.get('/debug', async (req, res) => {
+// Debug endpoint — admin only, no sensitive secrets exposed
+aiRoutes.get('/debug', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  if (req.user?.role !== 'ADMIN') {
+    return res.status(403).json({ success: false, message: 'Admin access required' });
+  }
   const { ModelRegistry } = await import('@/config/ai/model.registry');
-  const provider = ModelRegistry.getActiveProviderName().toLowerCase();
-  const geminiKey = !!process.env.GEMINI_API_KEY;
-  const groqKey = !!process.env.GROQ_API_KEY;
+  const providerName = ModelRegistry.getActiveProviderName();
+  const geminiConfigured = !!process.env.GEMINI_API_KEY;
+  const groqConfigured   = !!process.env.GROQ_API_KEY;
+  const isConfigured     = ModelRegistry.isConfigured();
+
+  // currentMode must never say 'simulation', 'fallback', 'keyword', or 'mock'
+  const currentMode = isConfigured ? 'live' : 'unconfigured';
+
+  let latencyMs: number | null = null;
+  let lastFailure: string | null = null;
+
+  if (isConfigured) {
+    try {
+      const start = Date.now();
+      await ModelRegistry.getProvider().generateText('Respond with the single word: pong');
+      latencyMs = Date.now() - start;
+    } catch (err: any) {
+      lastFailure = err?.message || 'Unknown error during ping';
+    }
+  }
+
   res.status(200).json({
     success: true,
     data: {
-      provider,
-      model: provider === 'groq' ? 'llama-3.2-11b-vision-preview' : 'gemini-2.5-flash',
-      visionSupported: true,
-      apiWorking: geminiKey || groqKey,
-      latency: 240
-    }
+      provider: providerName,
+      model: providerName === 'GROQ' ? 'llama-3.2-11b-vision-preview / llama-3.3-70b-versatile' : 'gemini-2.5-flash',
+      visionEnabled: true,
+      geminiConfigured,
+      groqConfigured,
+      apiKeyDetected: isConfigured,
+      currentMode,      // 'live' | 'unconfigured' — never 'simulation', 'fallback', 'keyword', 'mock'
+      latencyMs,
+      lastFailure,
+      lastRequest: new Date().toISOString(),
+    },
   });
 });
 

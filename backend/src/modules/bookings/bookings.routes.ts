@@ -107,17 +107,20 @@ bookingRoutes.get('/', authMiddleware as any, async (req: AuthenticatedRequest, 
   }
 });
 
-// Get single booking
+// Get single booking — enforce ownership
 bookingRoutes.get('/:id', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
+    const userId = req.user?.id;
+    const role = req.user?.role;
+
     const booking = await prisma.booking.findUnique({
       where: { id },
       include: {
         service: true,
         address: true,
         customer: { include: { user: true } },
-        vendor: true,
+        vendor: { include: { user: true } },
         agent: { include: { user: true } },
         statusHistory: { orderBy: { createdAt: 'desc' } },
       },
@@ -127,10 +130,18 @@ bookingRoutes.get('/:id', authMiddleware as any, async (req: AuthenticatedReques
       return res.status(404).json({ success: false, message: 'Booking not found' });
     }
 
-    res.status(200).json({
-      success: true,
-      data: booking,
-    });
+    // Ownership enforcement
+    if (role === 'CUSTOMER' && booking.customer.userId !== userId) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+    if (role === 'VENDOR') {
+      const vendor = await prisma.vendor.findUnique({ where: { userId: userId! } });
+      if (!vendor || booking.vendorId !== vendor.id) {
+        return res.status(403).json({ success: false, message: 'Access denied' });
+      }
+    }
+
+    res.status(200).json({ success: true, data: booking });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message || 'Failed to fetch booking detail' });
   }
@@ -156,6 +167,7 @@ bookingRoutes.post('/', authMiddleware as any, async (req: AuthenticatedRequest,
       scheduledTime,
       notes = '',
       totalAmount = 1499,
+      paymentMethod = 'UPI',
       latitude,
       longitude,
       placeId,
@@ -217,10 +229,10 @@ bookingRoutes.post('/', authMiddleware as any, async (req: AuthenticatedRequest,
     // 4. Create booking transactionally (Assign Vendor, Reserve Agent, notify customer & vendor)
     console.log(`[Booking Creation] Initializing transaction for reference: ${bookingNumber}`);
     const result = await prisma.$transaction(async (tx) => {
-      // Reserve Agent
+      // Reserve Agent — mark BUSY to prevent double-assignment
       await tx.agent.update({
         where: { id: agent.id },
-        data: { status: 'AVAILABLE' }, // Keep as AVAILABLE for simulation to allow concurrent booking testing
+        data: { status: 'BUSY' },
       });
 
       // Create Booking
@@ -240,6 +252,7 @@ bookingRoutes.post('/', authMiddleware as any, async (req: AuthenticatedRequest,
           vendorAmount,
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PENDING,
+          ...(paymentMethod ? { paymentMethod: String(paymentMethod).toUpperCase() } : {}),
           latitude: parseFloat(latitude.toString()),
           longitude: parseFloat(longitude.toString()),
           placeId: placeId ? String(placeId) : null,
@@ -259,11 +272,12 @@ bookingRoutes.post('/', authMiddleware as any, async (req: AuthenticatedRequest,
     });
 
     // Send notifications
+    const bookingResult = result as any;
     await createNotification({
       userId,
       role: 'CUSTOMER',
       title: 'Booking Confirmed! 🚀',
-      message: `Your booking for ${result.service.name} is confirmed with ${vendor.businessName}. Agent: ${result.agent?.user.firstName}. Ref: ${bookingNumber}`,
+      message: `Your booking for ${service.name} is confirmed with ${vendor.businessName}. Agent: ${bookingResult.agent?.user?.firstName || 'TBA'}. Ref: ${bookingNumber}`,
       type: 'BOOKING',
       priority: 'HIGH',
       actionUrl: '/customer/bookings',
@@ -274,7 +288,7 @@ bookingRoutes.post('/', authMiddleware as any, async (req: AuthenticatedRequest,
         userId: vendor.userId,
         role: 'VENDOR',
         title: 'New Job Dispatched 🎯',
-        message: `New booking ${bookingNumber} for ${result.service.name} has been assigned to your agent ${result.agent?.user.firstName}.`,
+        message: `New booking ${bookingNumber} for ${service.name} has been assigned to your agent ${bookingResult.agent?.user?.firstName || 'TBA'}.`,
         type: 'BOOKING',
         priority: 'HIGH',
         actionUrl: '/vendor/jobs',
@@ -315,7 +329,8 @@ const acceptBookingHandler = async (req: AuthenticatedRequest, res: Response) =>
       return res.status(404).json({ success: false, message: 'Booking not found' });
     }
 
-    if (booking.vendorId) {
+    // If another vendor already claimed this booking, reject
+    if (booking.vendorId && booking.vendorId !== vendor.id) {
       return res.status(400).json({ success: false, message: 'Booking has already been accepted by another vendor' });
     }
 
@@ -323,6 +338,7 @@ const acceptBookingHandler = async (req: AuthenticatedRequest, res: Response) =>
       where: { id },
       data: {
         vendorId: vendor.id,
+        status: BookingStatus.CONFIRMED,
       },
     });
 
@@ -522,11 +538,17 @@ bookingRoutes.patch('/:id/assign', authMiddleware as any, assignAgentHandler as 
 const cancelBookingHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user?.id;
+    const role = req.user?.role;
     const { id } = req.params;
     const { reason = 'Cancelled by user' } = req.body;
 
     if (!userId) {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    // Only customers and admins can cancel
+    if (role !== 'CUSTOMER' && role !== 'ADMIN') {
+      return res.status(403).json({ success: false, message: 'Only customers or admins can cancel bookings' });
     }
 
     const booking = await prisma.booking.findUnique({
@@ -627,6 +649,78 @@ bookingRoutes.post('/:id/transition', authMiddleware as any, async (req: Authent
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message || 'State transition failed.' });
+  }
+});
+
+// Submit review (Customer only, booking must be COMPLETED)
+bookingRoutes.post('/:id/review', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const role = req.user?.role;
+    const { id } = req.params;
+
+    if (!userId || role !== 'CUSTOMER') {
+      return res.status(403).json({ success: false, message: 'Only customers can submit reviews' });
+    }
+
+    const { rating, review: reviewText, tags = [] } = req.body;
+    if (!rating || rating < 1 || rating > 5) {
+      return res.status(400).json({ success: false, message: 'Rating must be between 1 and 5' });
+    }
+
+    const customer = await getOrCreateCustomer(userId);
+    if (!customer) {
+      return res.status(404).json({ success: false, message: 'Customer profile not found' });
+    }
+
+    const booking = await prisma.booking.findUnique({
+      where: { id },
+      include: { vendor: true, agent: true },
+    });
+
+    if (!booking) {
+      return res.status(404).json({ success: false, message: 'Booking not found' });
+    }
+    if (booking.customerId !== customer.id) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+    if (booking.status !== BookingStatus.COMPLETED) {
+      return res.status(400).json({ success: false, message: 'Reviews can only be submitted for completed bookings' });
+    }
+
+    // Check if review already exists
+    const existing = await prisma.review.findFirst({ where: { bookingId: id } });
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'Review already submitted for this booking' });
+    }
+
+    const savedReview = await prisma.$transaction(async (tx) => {
+      const r = await tx.review.create({
+        data: {
+          bookingId: id,
+          customerId: customer.id,
+          vendorId: booking.vendorId || undefined,
+          rating: Number(rating),
+          comment: reviewText || '',
+        },
+      });
+
+      // Update vendor aggregate rating
+      if (booking.vendorId) {
+        const allReviews = await tx.review.findMany({ where: { vendorId: booking.vendorId }, select: { rating: true } });
+        const avgRating = allReviews.reduce((sum, rv) => sum + rv.rating, 0) / allReviews.length;
+        await tx.vendor.update({
+          where: { id: booking.vendorId },
+          data: { rating: Math.round(avgRating * 10) / 10 },
+        });
+      }
+
+      return r;
+    });
+
+    res.status(201).json({ success: true, message: 'Review submitted successfully.', data: savedReview });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to submit review' });
   }
 });
 

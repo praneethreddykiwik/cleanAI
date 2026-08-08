@@ -39,31 +39,87 @@ export default function AdminDashboard() {
   const { isAuthenticated, isLoading: authLoading, logout } = useAuth();
   const [bookings, setBookings] = useState<any[]>([]);
   const [liveActivities, setLiveActivities] = useState<any[]>([]);
+  const [statsLoading, setStatsLoading] = useState(true);
   const [stats, setStats] = useState({
-    totalUsers: 1248,
-    activeVendors: 86,
-    totalBookings: 3420,
-    revenue: 124000,
+    totalUsers: 0,
+    activeVendors: 0,
+    totalBookings: 0,
+    platformRevenue: 0,
+    completionRate: 0,
+    pendingApprovals: 0,
+    avgResponseTime: 0,
+    monitoring: {
+      heapUsedMB: 0,
+      cacheHitRatio: 0,
+      failedAIRequests: 0,
+      failedPayments: 0,
+      onlineVendors: 0,
+      activeAgents: 0,
+    },
+  });
+  const [financials, setFinancials] = useState({
+    totalPayments: 0,
+    pendingSettlements: 0,
+    processedSettlements: 0,
+    totalRefunds: 0,
+    subscriptionCount: 0,
+    couponUsage: [] as any[],
   });
 
   const loadData = async () => {
+    setStatsLoading(true);
     try {
-      const res = await apiCall('/bookings');
-      if (res.success && res.data) {
-        setBookings(res.data.slice(0, 5));
-        setStats((prev) => ({
-          ...prev,
-          totalBookings: res.data.length,
-          revenue: res.data.reduce((acc: number, b: any) => acc + (b.totalAmount || 0), 0),
-        }));
+      // Load bookings, platform stats and financials in parallel
+      const [bookingsRes, statsRes, financialsRes] = await Promise.allSettled([
+        apiCall('/bookings'),
+        apiCall('/admin/stats'),
+        apiCall('/admin/financials'),
+      ]);
+
+      if (bookingsRes.status === 'fulfilled' && bookingsRes.value.success) {
+        setBookings((bookingsRes.value.data as any[]).slice(0, 5));
+      }
+
+      if (statsRes.status === 'fulfilled' && statsRes.value.success) {
+        const s = statsRes.value.data as any;
+        setStats({
+          totalUsers: s.totalUsers ?? 0,
+          activeVendors: s.activeVendors ?? 0,
+          totalBookings: s.totalBookings ?? 0,
+          platformRevenue: s.platformRevenue ?? 0,
+          completionRate: s.completionRate ?? 0,
+          pendingApprovals: s.pendingApprovals ?? 0,
+          avgResponseTime: s.avgResponseTime ?? 0,
+          monitoring: s.monitoring ?? {
+            heapUsedMB: 0,
+            cacheHitRatio: 0,
+            failedAIRequests: 0,
+            failedPayments: 0,
+            onlineVendors: 0,
+            activeAgents: 0,
+          },
+        });
+      }
+
+      if (financialsRes.status === 'fulfilled' && financialsRes.value.success) {
+        const f = financialsRes.value.data as any;
+        setFinancials({
+          totalPayments: f.totalPayments ?? 0,
+          pendingSettlements: f.pendingSettlements ?? 0,
+          processedSettlements: f.processedSettlements ?? 0,
+          totalRefunds: f.totalRefunds ?? 0,
+          subscriptionCount: f.subscriptionCount ?? 0,
+          couponUsage: f.couponUsage ?? [],
+        });
       }
     } catch (e: any) {
-      if (e.message?.includes('token') || e.message?.includes('auth') || e.message?.includes('401')) {
-        console.warn('Authentication token expired or invalid:', e.message);
+      if (e.message?.includes('token') || e.message?.includes('401')) {
         logout();
       } else {
-        console.error('Failed to load admin bookings:', e);
+        console.error('Failed to load admin dashboard data:', e);
       }
+    } finally {
+      setStatsLoading(false);
     }
   };
 
@@ -189,16 +245,16 @@ export default function AdminDashboard() {
             </div>
             <div className="space-y-3.5 text-xs font-semibold">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Cache Ping Latency</span>
-                <span className="text-foreground">1.2ms</span>
+                <span className="text-muted-foreground">Cache Hit Ratio</span>
+                <span className="text-foreground">{statsLoading ? '—' : `${stats.monitoring.cacheHitRatio}%`}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Active Socket.IO Sessions</span>
-                <span className="text-foreground">12 cached sessions</span>
+                <span className="text-muted-foreground">Online Vendors (Live Sessions)</span>
+                <span className="text-foreground">{statsLoading ? '—' : stats.monitoring.onlineVendors}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Rate Limiting Store</span>
-                <span className="text-foreground">Redis-Memory Pool</span>
+                <span className="text-muted-foreground">Memory (Heap Used)</span>
+                <span className="text-foreground">{statsLoading ? '—' : `${stats.monitoring.heapUsedMB} MB`}</span>
               </div>
             </div>
           </GlassCard>
@@ -220,19 +276,20 @@ export default function AdminDashboard() {
             </div>
             <div className="space-y-3">
               <div className="flex justify-between items-center text-xs font-semibold">
-                <span className="text-muted-foreground">AIAnalysisQueue</span>
-                <span className="text-foreground">12 processed / 0 failed</span>
+                <span className="text-muted-foreground">AI Requests (SystemLog)</span>
+                <span className={`text-foreground ${stats.monitoring.failedAIRequests > 0 ? 'text-amber-500' : ''}`}>
+                  {statsLoading ? '—' : `${stats.monitoring.failedAIRequests} failed`}
+                </span>
               </div>
               <div className="flex justify-between items-center text-xs font-semibold">
-                <span className="text-muted-foreground">NotificationQueue</span>
-                <div className="flex items-center gap-2">
-                  <span className="text-foreground">45 processed</span>
-                  <span className="text-[9px] bg-red-500/10 text-red-600 dark:text-red-400 px-1.5 py-0.5 rounded-md font-bold">1 failed</span>
-                </div>
+                <span className="text-muted-foreground">Active Field Agents</span>
+                <span className="text-foreground">{statsLoading ? '—' : stats.monitoring.activeAgents}</span>
               </div>
               <div className="flex justify-between items-center text-xs font-semibold">
-                <span className="text-muted-foreground">EmailQueue</span>
-                <span className="text-foreground">24 processed / 0 failed</span>
+                <span className="text-muted-foreground">Failed Payments</span>
+                <span className={`text-foreground ${stats.monitoring.failedPayments > 0 ? 'text-red-500' : 'text-green-500'}`}>
+                  {statsLoading ? '—' : stats.monitoring.failedPayments}
+                </span>
               </div>
             </div>
           </GlassCard>
@@ -269,7 +326,7 @@ export default function AdminDashboard() {
           />
           <StatCard
             title="Platform Revenue"
-            value={stats.revenue}
+            value={stats.platformRevenue}
             icon={DollarSign}
             iconColor="text-orange-600 dark:text-orange-400"
             iconBg="bg-orange-500/10 border-orange-500/20"
@@ -289,15 +346,15 @@ export default function AdminDashboard() {
             <div className="space-y-3.5 text-xs font-semibold">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Total Settled Earnings</span>
-                <span className="text-foreground">₹86,800.00</span>
+                <span className="text-foreground">{statsLoading ? '—' : formatCurrency(financials.processedSettlements)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Pending Escrow Settlements</span>
-                <span className="text-foreground text-amber-500">₹37,200.00</span>
+                <span className="text-foreground text-amber-500">{statsLoading ? '—' : formatCurrency(financials.pendingSettlements)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">GST Paid (18% Collected)</span>
-                <span className="text-foreground">₹22,320.00</span>
+                <span className="text-muted-foreground">Total Refunds Processed</span>
+                <span className="text-foreground">{statsLoading ? '—' : formatCurrency(financials.totalRefunds)}</span>
               </div>
             </div>
           </GlassCard>
@@ -309,16 +366,16 @@ export default function AdminDashboard() {
             </div>
             <div className="space-y-3.5 text-xs font-semibold">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">VIP Plus Memberships</span>
-                <span className="text-foreground">34 active</span>
+                <span className="text-muted-foreground">Active Subscriptions</span>
+                <span className="text-foreground">{statsLoading ? '—' : financials.subscriptionCount}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Premium Elite Memberships</span>
-                <span className="text-foreground">24 active</span>
+                <span className="text-muted-foreground">Active Coupons</span>
+                <span className="text-foreground">{statsLoading ? '—' : financials.couponUsage.length}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Average Wallet Balance</span>
-                <span className="text-foreground">₹480.00</span>
+                <span className="text-muted-foreground">Vendor Completion Rate</span>
+                <span className="text-foreground text-green-500">{statsLoading ? '—' : `${stats.completionRate}%`}</span>
               </div>
             </div>
           </GlassCard>
@@ -330,16 +387,18 @@ export default function AdminDashboard() {
             </div>
             <div className="space-y-3.5 text-xs font-semibold">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Transaction Success Rate</span>
-                <span className="text-foreground text-green-500">98.4%</span>
+                <span className="text-muted-foreground">Total Payments Collected</span>
+                <span className="text-foreground text-green-500">{statsLoading ? '—' : formatCurrency(financials.totalPayments)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Refund & Dispute Ratio</span>
-                <span className="text-foreground">1.2% (12 processed)</span>
+                <span className="text-muted-foreground">Avg AI Response Time</span>
+                <span className="text-foreground">{statsLoading ? '—' : `${stats.avgResponseTime} ms`}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Coupon Discount Absorbed</span>
-                <span className="text-foreground">₹12,450.00</span>
+                <span className="text-muted-foreground">Pending Vendor Approvals</span>
+                <span className={`text-foreground ${stats.pendingApprovals > 0 ? 'text-amber-500' : 'text-green-500'}`}>
+                  {statsLoading ? '—' : stats.pendingApprovals}
+                </span>
               </div>
             </div>
           </GlassCard>
@@ -356,30 +415,18 @@ export default function AdminDashboard() {
               Projections
             </span>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-4 text-center">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-center">
             <div className="space-y-1">
-              <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase">Gross Margin</div>
-              <div className="text-sm font-bold text-foreground">15.0%</div>
+              <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase">Total Users</div>
+              <div className="text-sm font-bold text-foreground">{statsLoading ? '—' : stats.totalUsers.toLocaleString()}</div>
             </div>
             <div className="space-y-1">
-              <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase">Net Margin</div>
-              <div className="text-sm font-bold text-green-500">13.8%</div>
+              <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase">Active Vendors</div>
+              <div className="text-sm font-bold text-green-500">{statsLoading ? '—' : stats.activeVendors}</div>
             </div>
             <div className="space-y-1">
-              <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase">Avg CLV</div>
-              <div className="text-sm font-bold text-foreground">₹4,850.00</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase">CAC Limit</div>
-              <div className="text-sm font-bold text-foreground">₹420.00</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase">Repeat Booking</div>
-              <div className="text-sm font-bold text-foreground">42.8%</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase">AI Cost / Book</div>
-              <div className="text-sm font-bold text-foreground">₹0.05</div>
+              <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase">Completion Rate</div>
+              <div className="text-sm font-bold text-foreground">{statsLoading ? '—' : `${stats.completionRate}%`}</div>
             </div>
           </div>
         </GlassCard>
@@ -461,25 +508,35 @@ export default function AdminDashboard() {
           {/* Right Side Control Widgets */}
           <div className="space-y-6">
             <GlassCard level={2} className="border border-white/40 dark:border-white/10 p-5 shadow-xs">
-              <h3 className="text-xs font-semibold text-muted-foreground/80 mb-4">
-                Booking Distribution
+              <h3 className="text-xs font-semibold text-muted-foreground/80 mb-1">
+                Recent Bookings by Service
               </h3>
+              <p className="text-[9px] text-muted-foreground/50 mb-4">Computed from latest 5 bookings loaded</p>
               <div className="space-y-4">
-                {[
-                  { label: 'Cleaning Services', pct: 35, variant: 'default' as const },
-                  { label: 'Electrical / Plumbing', pct: 22, variant: 'warning' as const },
-                  { label: 'AC Service', pct: 18, variant: 'default' as const },
-                  { label: 'Pest Control', pct: 12, variant: 'success' as const },
-                  { label: 'Others', pct: 13, variant: 'error' as const },
-                ].map((item) => (
-                  <div key={item.label} className="space-y-1">
-                    <div className="flex items-center justify-between text-xs font-bold leading-none">
-                      <span className="text-muted-foreground/80">{item.label}</span>
-                      <span className="text-foreground">{item.pct}%</span>
-                    </div>
-                    <Progress value={item.pct} size="xs" variant={item.variant} />
-                  </div>
-                ))}
+                {statsLoading || bookings.length === 0 ? (
+                  <div className="text-xs text-muted-foreground/50 text-center py-4">No data yet</div>
+                ) : (
+                  (() => {
+                    const counts: Record<string, number> = {};
+                    bookings.forEach((b: any) => {
+                      const svc = b.service?.name || 'Other';
+                      counts[svc] = (counts[svc] || 0) + 1;
+                    });
+                    const total = bookings.length;
+                    return Object.entries(counts).slice(0, 5).map(([label, count]) => {
+                      const pct = Math.round((count / total) * 100);
+                      return (
+                        <div key={label} className="space-y-1">
+                          <div className="flex items-center justify-between text-xs font-bold leading-none">
+                            <span className="text-muted-foreground/80 truncate">{label}</span>
+                            <span className="text-foreground ml-2">{pct}%</span>
+                          </div>
+                          <Progress value={pct} size="xs" variant="default" />
+                        </div>
+                      );
+                    });
+                  })()
+                )}
               </div>
             </GlassCard>
           </div>

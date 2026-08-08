@@ -25,6 +25,8 @@ export function useNotifications(filters: {
   limit?: number;
   enabledFeed?: boolean;
   enabledUnreadCount?: boolean;
+  /** Master gate: set to false when user is not authenticated to prevent 401 floods */
+  isAuthenticated?: boolean;
 } = {}) {
   const queryClient = useQueryClient();
   const {
@@ -35,7 +37,15 @@ export function useNotifications(filters: {
     limit = 10,
     enabledFeed = true,
     enabledUnreadCount = true,
+    isAuthenticated,
   } = filters;
+
+  // Derive auth state from localStorage when `isAuthenticated` prop is not provided.
+  // This prevents API calls firing before the auth context has hydrated.
+  const hasToken = typeof window !== 'undefined'
+    ? !!localStorage.getItem('cleanai_tokens')
+    : false;
+  const canFetch = isAuthenticated !== undefined ? isAuthenticated : hasToken;
 
   // Query notifications feed
   const feedQuery = useQuery({
@@ -51,8 +61,8 @@ export function useNotifications(filters: {
       const res = await apiCall(`/notifications?${searchParams.toString()}`);
       return res;
     },
-    enabled: enabledFeed,
-    staleTime: 30000, // Cache feed for 30 seconds
+    enabled: canFetch && enabledFeed,
+    staleTime: 30000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
@@ -65,12 +75,13 @@ export function useNotifications(filters: {
       const res = await apiCall('/notifications/unread-count');
       return res.data?.count ?? 0;
     },
-    enabled: enabledUnreadCount,
-    staleTime: 15000, // Cache unread count for 15 seconds
+    enabled: canFetch && enabledUnreadCount,
+    staleTime: 15000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
-    refetchInterval: enabledUnreadCount ? 30000 : false, // Poll unread count every 30 seconds
+    // Only poll when authenticated — avoids spamming a downed backend
+    refetchInterval: canFetch && enabledUnreadCount ? 30000 : false,
   });
 
   // Mark single as read mutation

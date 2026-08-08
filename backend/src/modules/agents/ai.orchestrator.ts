@@ -78,8 +78,10 @@ export class AIOrchestrator {
   static async handleChatSession(params: {
     userId: string;
     customerId: string;
+    customerFirstName?: string;
     text: string;
     image?: string | null;
+    images?: string[];
     conversationId?: string | null;
     serviceName?: string;
     latitude?: number;
@@ -155,8 +157,9 @@ export class AIOrchestrator {
       !descLower.includes('wash');
 
     if (requiresServiceSelection && historyMessages.length <= 2) {
-      // Stage: GREETING
-      let greeting = `Hi Vivek 👋 I'm Criska AI, your home services operating system. Tell me what needs to be done today.`;
+      // Stage: GREETING — use actual customer name from authenticated session
+      const name = params.customerFirstName || 'there';
+      let greeting = `Hi ${name} 👋 I'm Criska AI, your home services operating system. Tell me what needs to be done today.`;
       if (memories.length > 0) {
         const lastTech = memories.find(m => m.key === 'favorite_technician');
         const lastService = memories.find(m => m.key === 'favorite_service');
@@ -217,20 +220,20 @@ export class AIOrchestrator {
     await logStep('Supervisor Agent', 'Understanding customer request details.');
     await logStep('Vision Agent', 'Analyzing cleaning area complexity bounds.');
 
-    // 1. Run Vision Agent (Agent 1)
+    // 1. Run Vision Agent (Agent 1) with multi-image support
     const serviceName = params.serviceName || (impliesCleaning ? 'Deep Cleaning' : 'Electrical');
-    const complexity = await AgentsService.analyzeJobComplexity(params.image || null, params.text, serviceName);
+    const imageList = params.images || (params.image ? [params.image] : null);
+    const complexity = await AgentsService.analyzeJobComplexity(imageList, params.text, serviceName);
 
-    await logStep('Pricing Agent', 'Calculating cost matrix and surcharges.');
+    await logStep('Pricing Agent', 'Calculating WCI & modular cost matrix.');
 
-    // 2. Run Pricing Engine
+    // 2. Run Modular Pricing Engine
     const isWeekend = new Date().getDay() === 0 || new Date().getDay() === 6;
     const pricing = await AgentsService.calculatePriceEstimate(complexity, isWeekend, 'Bengaluru');
 
     await logStep('Vendor Agent', 'Locating closest verified technicians.');
 
     // 3. Run Vendor Matching Agent
-    // Default coordinates (Bengaluru Center)
     const matches = await AgentsService.matchBestVendors({
       serviceName: complexity.service,
       latitude: params.latitude || 12.9716,
@@ -240,6 +243,33 @@ export class AIOrchestrator {
 
     await logStep('Booking Agent', 'Verifying calendar slot availability.');
 
+    // 4. Create Audit Trail Record
+    try {
+      await prisma.auditLog.create({
+        data: {
+          action: 'CREATE',
+          resource: 'AIEstimateAudit',
+          details: {
+            conversationId,
+            userId: params.userId,
+            aiProvider: ModelRegistry.getActiveProviderName(),
+            modelVersion: 'v2.5.0',
+            promptVersion: 'v2.5.0',
+            rawObservationJson: complexity,
+            computedWCI: complexity.wciScore,
+            wciSubScores: complexity.wciSubScores,
+            pricingBreakdown: pricing,
+            distanceKm: 4.5,
+            vendorCount: matches.length,
+            finalQuote: { min: pricing.totalMin, max: pricing.totalMax },
+            timestamp: new Date().toISOString(),
+          } as any,
+        },
+      });
+    } catch (auditErr) {
+      console.error('[Audit Trail Error] Failed to write AI estimate audit log:', auditErr);
+    }
+
     // Create assistant text response summary
     let assistantText = '';
     const geminiKey = process.env.GEMINI_API_KEY || '';
@@ -248,42 +278,35 @@ export class AIOrchestrator {
     if (geminiKey || groqKey) {
       const provider = ModelRegistry.getProvider();
       const explanationPrompt = `
-        You are the CleanAI Supervisor Agent. Explain the reasoning for the job complexity assessment to the user.
+        You are the CleanAI Supervisor Agent. Explain the reasoning for the job complexity assessment to the user using conversational tone.
         ${memoryContextString}
         ${historyContextString}
         User request: "${params.text}"
         Detected Service: "${complexity.service}"
-        Detected Subcategory: "${complexity.subcategory}"
-        Severity: "${complexity.severity}"
-        Difficulty: "${complexity.difficulty}"
-        Workers Suggested: ${complexity.workersRequired}
-        Estimated Duration: "${complexity.estimatedDuration}"
-        Objects/Issues Detected: ${JSON.stringify(complexity.objectsDetected)}
-        Damage Level: "${complexity.damageLevel}"
-        Recommended Tools: ${JSON.stringify(complexity.recommendedTools)}
+        Room & Area: "${complexity.room?.type} (~${complexity.room?.estimatedAreaSqft} sq.ft)"
+        Detected Issues: ${JSON.stringify(complexity.detectedIssues)}
+        Work Complexity Index (WCI): ${complexity.wciScore}/100 (${complexity.starRating}⭐ - ${complexity.severityLabel})
+        Calculated Price Range: ₹${pricing.totalMin} - ₹${pricing.totalMax}
+        Confidence Gating: ${complexity.confidenceGating} (${complexity.confidenceMessage})
+        Requires Vendor Bidding: ${complexity.requiresBidding ? 'Yes (5-Star Heavy Job)' : 'No'}
 
-        Write a concise, helpful explanation (2-3 sentences max) detailing why this service type and severity level was assessed, outlining any safety elements, debris levels, or specialized tools required, e.g., "I detected heavy grease on the stove grills and tile grout. This requires deep kitchen cleaning with specialized degreasing chemicals, and will take about 4 hours."
+        Write a concise, helpful explanation (2-3 sentences max) detailing why this service type and severity level was assessed, outlining any safety elements, debris levels, or specialized tools required, e.g., "I detected heavy grease on the stove grills and tile grout (WCI: 68/100). This requires deep kitchen cleaning with specialized degreasing chemicals, and will take about 3.5 hours."
       `;
       try {
         assistantText = await provider.generateText(explanationPrompt);
       } catch (err) {
-        assistantText = `I have analyzed your request for ${complexity.service}. The job is estimated as ${complexity.severity} severity, requiring ${complexity.workersRequired} technician(s) for approximately ${complexity.estimatedDuration}.`;
+        assistantText = `I have analyzed your request for ${complexity.service}. The job is assessed at WCI Index ${complexity.wciScore}/100 (${complexity.starRating}⭐ - ${complexity.severityLabel}), requiring ${complexity.workersRequired} technician(s) for approximately ${complexity.estimatedDuration}.`;
       }
     } else {
-      // High-fidelity local simulation reasoning based on complexity results
-      if (complexity.service === 'Kitchen Cleaning') {
-        assistantText = `I have completed the analysis on your Kitchen! I detected oil deposits, kitchen chimney grease, and stove grill debris. This is a ${complexity.severity} severity request requiring degreasing chemicals, and is estimated to take ${complexity.estimatedDuration} with ${complexity.workersRequired} technician(s).`;
-      } else if (complexity.service === 'Bathroom Cleaning') {
-        assistantText = `I have completed the analysis on your Bathroom! I detected hardwater stains and limescale on the tiled walls and fixtures. This requires descaling solution and buffing pads, taking about ${complexity.estimatedDuration} with ${complexity.workersRequired} technician(s).`;
-      } else if (complexity.service === 'Electrical') {
-        assistantText = `I have completed the analysis on your electrical lines! I identified potential burnt wiring or a defective switch on your Power Distribution Board. Due to safety concerns, this is flagged as ${complexity.severity} severity and requires insulated tools and testing.`;
-      } else if (complexity.service === 'Plumbing') {
-        assistantText = `I have completed the plumbing analysis! I identified potential leakage or pipe corrosion in the drainage assembly. This will require a pipe wrench and sealant tape to repair.`;
-      } else if (complexity.service === 'Sofa Cleaning') {
-        assistantText = `I have completed the upholstery analysis! I identified pet hair and stain spots on the fabric upholstery. This requires fabric shampoo and an extraction vacuum.`;
-      } else {
-        assistantText = `I have completed the analysis! Based on the details, this job is classified under ${complexity.service} at ${complexity.severity} severity. It will take about ${complexity.estimatedDuration} with ${complexity.workersRequired} technician(s).`;
-      }
+      assistantText = `I have completed the visual & text analysis! Work Complexity Index (WCI) is **${complexity.wciScore}/100** (${complexity.starRating}⭐ - ${complexity.severityLabel}). Recommended duration: ${complexity.estimatedDuration} with ${complexity.workersRequired} technician(s).`;
+    }
+
+    if (complexity.confidenceGating && complexity.confidenceGating !== 'AUTOMATIC_ESTIMATE') {
+      assistantText += `\n\n📌 **Confidence Note**: ${complexity.confidenceMessage}`;
+    }
+
+    if (complexity.requiresBidding) {
+      assistantText += `\n\n🚨 **5-Star Heavy Job Marketplace Bidding Activated**: Because this job is assessed at 5-Star complexity (WCI ≥ 81), we have opened a 15-minute bidding window for nearby verified vendors to submit competing quotes.`;
     }
 
     await prisma.conversationMessage.create({

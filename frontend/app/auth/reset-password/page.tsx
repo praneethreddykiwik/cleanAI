@@ -1,15 +1,18 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { useState } from 'react';
+import { useState, Suspense } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import Link from 'next/link';
 import { Lock, Eye, EyeOff, Loader2, CheckCircle2 } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { authCardVariants } from '@/lib/animations';
 import { cn } from '@/lib/utils';
+import { apiCall } from '@/lib/api';
+import { toast } from 'sonner';
 
 const resetPasswordSchema = z
   .object({
@@ -27,7 +30,8 @@ const resetPasswordSchema = z
 
 type ResetPasswordForm = z.infer<typeof resetPasswordSchema>;
 
-export default function ResetPasswordPage() {
+function ResetPasswordContent() {
+  const searchParams = useSearchParams();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -41,11 +45,24 @@ export default function ResetPasswordPage() {
   });
 
   const onSubmit = async (data: ResetPasswordForm) => {
+    const token = searchParams.get('token');
+    if (!token) {
+      toast.error('Invalid or missing reset token. Please request a new reset link.');
+      return;
+    }
     setIsSubmitting(true);
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    setIsSubmitting(false);
-    setIsSuccess(true);
+    try {
+      const res = await apiCall('/auth/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({ token, password: data.password }),
+      });
+      if (!res.success) throw new Error(res.message || 'Reset failed');
+      setIsSuccess(true);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to reset password. The link may have expired.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -158,5 +175,13 @@ export default function ResetPasswordPage() {
         )}
       </div>
     </motion.div>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>}>
+      <ResetPasswordContent />
+    </Suspense>
   );
 }

@@ -30,13 +30,17 @@ export function Header({
   onMobileMenuToggle,
   isMobileMenuOpen,
 }: HeaderProps) {
-  const { user, logout } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading, logout } = useAuth();
   const router = useRouter();
   const [isScrolled, setIsScrolled] = useState(false);
   const [bellShake, setBellShake] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isCmdPaletteOpen, setIsCmdPaletteOpen] = useState(false);
-  const { unreadCount } = useNotifications({ enabledFeed: false });
+  // Only fetch unread count once auth is confirmed — prevents 401 floods on cold load
+  const { unreadCount } = useNotifications({
+    enabledFeed: false,
+    isAuthenticated: isAuthenticated && !authLoading,
+  });
 
   // Scroll-aware glass intensification
   useEffect(() => {

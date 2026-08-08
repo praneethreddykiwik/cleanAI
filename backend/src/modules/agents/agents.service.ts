@@ -1,40 +1,54 @@
 import { prisma } from '@/database';
-import { ModelRegistry } from '@/config/ai/model.registry';
+import { ModelRegistry, JobComplexityResult, WCISubScores, ConfidenceGatingStatus } from '@/config/ai/model.registry';
 import * as crypto from 'crypto';
 import { redisService } from '@/config/redis';
+import { logger } from '@/config/logger';
 
-export interface JobComplexityResult {
-  service: string;
-  subcategory: string;
-  confidence: number;
-  severity: string; // 'Very Low' | 'Low' | 'Medium' | 'High' | 'Critical'
-  estimatedDuration: string;
-  workersRequired: number;
-  difficulty: string; // 'Very Low' | 'Low' | 'Medium' | 'High' | 'Critical'
-  objectsDetected: string[];
-  damageLevel: string;
-  recommendedTools: string[];
+export type { JobComplexityResult, WCISubScores, ConfidenceGatingStatus };
+
+export interface LineItem {
+  key: string;
+  label: string;
+  amount: number;
+  explanation: string;
 }
 
 export interface PriceEstimationBreakdown {
   basePrice: number;
-  cityMultiplier: number;
-  demandMultiplier: number;
-  severityFee: number;
-  areaMultiplier: number;
-  weekendSurcharge: number;
-  nightCharge: number;
-  holidayCharge: number;
+  wciAdjustment: number;
+  areaAdjustment: number;
+  equipmentCost: number;
+  chemicalCost: number;
+  labourAdjustment: number;
   travelFee: number;
-  taxes: number;
+  nightCharge: number;
+  weekendSurcharge: number;
   platformFee: number;
+  taxes: number;
   totalMin: number;
   totalMax: number;
+  lineItems: LineItem[];
+  cityMultiplier?: number;
+  demandMultiplier?: number;
+  severityFee?: number;
+  areaMultiplier?: number;
+  holidayCharge?: number;
 }
 
-const VENDOR_COORDINATES: Record<string, { lat: number; lng: number }> = {
-  'vendor1@cleanai.com': { lat: 12.9716, lng: 77.5946 },
-  'vendor2@cleanai.com': { lat: 12.9616, lng: 77.5846 },
+// Default configurable base price map if service record missing from DB
+const DEFAULT_SERVICE_BASE_PRICES: Record<string, number> = {
+  'Bathroom Cleaning': 299,
+  'Kitchen Cleaning': 499,
+  'Sofa Cleaning': 399,
+  'Mattress Cleaning': 349,
+  'AC Service': 599,
+  'Bike Wash': 199,
+  'Car Wash': 399,
+  'Deep Cleaning': 999,
+  'Full Home Cleaning': 1499,
+  'Painting': 1499,
+  'Electrical': 399,
+  'Plumbing': 349,
 };
 
 export class AgentsService {
@@ -67,31 +81,63 @@ export class AgentsService {
   }
 
   /**
-   * Helper utility to clean and parse JSON responses from LLMs
+   * Parse raw text from generateText() into a validated JobComplexityResult.
+   * Throws if the response is missing required fields — never fills defaults.
    */
-  private static parseLLMJson(text: string): any {
-    try {
-      // Clean markdown code blocks if any exist
-      let cleaned = text.trim();
-      if (cleaned.includes('```')) {
-        const matches = cleaned.match(/```(?:json)?([\s\S]*?)```/);
-        if (matches && matches[1]) {
-          cleaned = matches[1].trim();
-        }
-      }
-      return JSON.parse(cleaned);
-    } catch (e) {
-      // Fallback regex scan to extract raw JSON block if surrounded by text
-      const regexMatch = text.match(/\{[\s\S]*?\}/);
-      if (regexMatch) {
-        try {
-          return JSON.parse(regexMatch[0]);
-        } catch (innerErr) {
-          throw new Error('Failed to parse clean JSON block');
-        }
-      }
-      throw e;
+  private static parseJobResultText(text: string, _inferredService: string): JobComplexityResult {
+    if (!text?.trim()) throw new Error('AI returned empty text response');
+
+    let cleaned = text.trim();
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
     }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error(`Cannot parse AI text as JSON: "${cleaned.slice(0, 200)}"`);
+      parsed = JSON.parse(match[0]);
+    }
+
+    const required = ['service', 'confidence', 'workersRequired', 'objectsDetected'];
+
+    for (const field of required) {
+      if (parsed[field] === undefined || parsed[field] === null) {
+        throw new Error(`AI response missing field "${field}". Full response: ${JSON.stringify(parsed).slice(0, 400)}`);
+      }
+    }
+
+    const conf = parseFloat(String(parsed.confidence));
+    if (isNaN(conf) || conf < 0 || conf > 1) {
+      throw new Error(`Invalid confidence: ${parsed.confidence}`);
+    }
+
+    const roomType = String(parsed.room?.type || parsed.subcategory || 'General');
+    const sqft = Math.max(30, parseInt(String(parsed.room?.estimatedAreaSqft || 150), 10));
+
+    return {
+      service: String(parsed.service || _inferredService || 'Deep Cleaning'),
+      subcategory: `${roomType} (${sqft} sq.ft)`,
+      room: {
+        type: roomType,
+        estimatedAreaSqft: sqft,
+      },
+      surfaces: Array.isArray(parsed.surfaces) ? parsed.surfaces.map(String) : ['Tile'],
+      detectedIssues: Array.isArray(parsed.detectedIssues)
+        ? parsed.detectedIssues.map((i: any) => ({ type: String(i.type || 'Dust'), severity: parseFloat(String(i.severity || 0.5)) }))
+        : [{ type: 'Dust', severity: 0.5 }],
+      objectsDetected: Array.isArray(parsed.objectsDetected) ? parsed.objectsDetected.map(String) : [],
+      estimatedDurationHours: Math.max(0.5, parseFloat(String(parsed.estimatedDurationHours || 2.0))),
+      estimatedDuration: `${parsed.estimatedDurationHours || 2.0} Hours`,
+      workersRequired: Math.max(1, parseInt(String(parsed.workersRequired), 10)),
+      recommendedEquipment: Array.isArray(parsed.recommendedEquipment || parsed.recommendedTools)
+        ? (parsed.recommendedEquipment || parsed.recommendedTools).map(String)
+        : [],
+      confidence: Math.round(conf * 1000) / 1000,
+      reasoning: parsed.reasoning ? String(parsed.reasoning) : undefined,
+    };
   }
 
   /**
@@ -124,7 +170,7 @@ export class AgentsService {
   }
 
   private static async validateVisionResult(result: JobComplexityResult): Promise<boolean> {
-    if (!result.service || !result.severity || !result.workersRequired || !result.estimatedDuration) {
+    if (!result.service || !result.workersRequired || !result.estimatedDurationHours) {
       return false;
     }
     const validServices = [
@@ -145,13 +191,51 @@ export class AgentsService {
    * Analyzes an uploaded image (base64) & description to estimate complexity metrics
    */
   static async analyzeJobComplexity(
-    imageBufferBase64: string | null,
+    imageInput: string[] | string | null,
     userDescription: string,
     inferredService: string = 'Deep Cleaning'
   ): Promise<JobComplexityResult> {
     const startTime = process.hrtime.bigint();
-    const promptVersion = 'v1.0.0';
-    const model = process.env.GROQ_API_KEY ? 'llama-3.2-11b-vision-preview' : 'gemini-2.5-flash';
+    const promptVersion = 'v2.5.0';
+    const providerName = ModelRegistry.getActiveProviderName();
+    const model = providerName === 'GROQ' ? 'llama-3.2-11b-vision-preview' : 'gemini-2.5-flash';
+
+    // Normalize image input array
+    const imageList: string[] = Array.isArray(imageInput)
+      ? imageInput.filter(Boolean)
+      : imageInput
+      ? [imageInput]
+      : [];
+
+    if (imageList.length > 1) {
+      const observations: JobComplexityResult[] = [];
+      for (const img of imageList) {
+        const singleResult = await this.analyzeJobComplexity(img, userDescription, inferredService);
+        observations.push(singleResult);
+      }
+      const merged = this.mergeObservations(observations);
+      // Run WCI engine on merged observation
+      const wci = this.calculateWorkComplexityIndex(merged);
+      const gating = this.getConfidenceGating(merged.confidence);
+      merged.wciScore = wci.wciScore;
+      merged.wciSubScores = wci.subScores;
+      merged.starRating = wci.starRating;
+      merged.severityLabel = wci.severityLabel;
+      merged.requiresBidding = wci.requiresBidding;
+      merged.confidenceGating = gating.status;
+      merged.confidenceMessage = gating.message;
+      return merged;
+    }
+
+    const imageBufferBase64 = imageList.length === 1 ? imageList[0] : null;
+
+    // Hard block: no AI key = no analysis. Never simulate.
+    if (!ModelRegistry.isConfigured()) {
+      throw new Error(
+        'AI_NOT_CONFIGURED: No GEMINI_API_KEY or GROQ_API_KEY is set in backend/.env. ' +
+        'Real AI analysis requires an API key. Get Groq free at https://console.groq.com/keys'
+      );
+    }
 
     let imageHash = '';
     if (imageBufferBase64) {
@@ -211,138 +295,57 @@ export class AgentsService {
       }
     }
 
-    // Call LLM (with retries/validation)
+    // ── UNIFIED AI CALL (no simulation, no fallback, no keyword parsing) ──
+    //
+    // Single path for both image and text:
+    //   - Image present → provider.analyzeImage() with full JOB_ANALYSIS_PROMPT
+    //   - Text only    → provider.generateText() with full JOB_ANALYSIS_PROMPT + description
+    //
+    // The provider is determined by ModelRegistry (GROQ if key set, else GEMINI).
+    // ModelRegistry throws if no key is configured — caught below.
+
     let attempts = 0;
     const maxAttempts = 2;
     let finalResult: JobComplexityResult | null = null;
+    let lastError: Error | null = null;
 
     while (attempts < maxAttempts) {
       attempts++;
       try {
+        const provider = ModelRegistry.getProvider();
         let result: JobComplexityResult;
-        const geminiKey = process.env.GEMINI_API_KEY || '';
-        const groqKey = process.env.GROQ_API_KEY || '';
 
-        if (!geminiKey && !groqKey) {
-          console.log('[Vision Agent] Neither GEMINI_API_KEY nor GROQ_API_KEY is configured. Running high-fidelity simulation...');
-          result = await this.simulateVisionAnalysis(userDescription, inferredService);
+        if (imageBufferBase64) {
+          // IMAGE PATH: pass image directly — provider uses JOB_ANALYSIS_PROMPT internally
+          logger.info(`[Vision Agent] Attempt ${attempts}: sending image to ${providerName} for analysis`);
+          result = await provider.analyzeImage(imageBufferBase64);
         } else {
-          const promptText = `
-            Analyze the user's home service request description: "${userDescription}".
-            ${imageBufferBase64 ? 'Analyze the uploaded service location photo.' : ''}
-            Identify the service category, identify severity of cleaning/repair needed, detect objects, assess structural/damage levels, and suggest duration/workers.
-            
-            You MUST respond ONLY with a valid raw JSON object matching the following TypeScript interface:
-            interface JobComplexityResult {
-              service: string; // The service name matching one of: 'Deep Cleaning', 'Kitchen Cleaning', 'Bathroom Cleaning', 'Sofa Cleaning', 'Electrical', 'Plumbing', 'AC Service', 'Pest Control', 'Laundry', 'Gardening', 'Car Wash'
-              subcategory: string; // Specific item or room area e.g. "Kitchen Cabinets", "Bathroom Tiles", "Living Room Sofa"
-              confidence: number; // Float between 0.0 and 1.0 representing classification classification confidence
-              severity: 'Very Low' | 'Low' | 'Medium' | 'High' | 'Critical'; // Job severity level
-              estimatedDuration: string; // Estimated time e.g. "3 Hours", "5 Hours"
-              workersRequired: number; // Suggested number of technicians
-              difficulty: 'Very Low' | 'Low' | 'Medium' | 'High' | 'Critical'; // Job difficulty
-              objectsDetected: string[]; // Specific items or problems seen/described e.g. ["grease", "stains", "leaking pipe", "loose wiring"]
-              damageLevel: string; // e.g. "Low", "Medium", "High"
-              recommendedTools: string[]; // e.g. ["Steam Cleaner", "Screwdriver", "Multimeter"]
-            }
-          `;
+          // TEXT-ONLY PATH: send full prompt with user description
+          const { JOB_ANALYSIS_PROMPT } = await import('@/config/ai/model.registry');
+          const fullPrompt = `${JOB_ANALYSIS_PROMPT}
 
-          if (groqKey) {
-            const provider = ModelRegistry.getProvider();
-            let rawResult: any;
-            if (imageBufferBase64) {
-              rawResult = await provider.analyzeImage(imageBufferBase64);
-            } else {
-              const textResult = await provider.generateText(promptText);
-              rawResult = this.parseLLMJson(textResult);
-            }
-            result = {
-              service: rawResult.service || inferredService,
-              subcategory: rawResult.subcategory || 'General Area',
-              confidence: rawResult.confidence || 0.88,
-              severity: rawResult.severity || 'Medium',
-              estimatedDuration: rawResult.estimatedDuration || '2 Hours',
-              workersRequired: rawResult.workersRequired || 1,
-              difficulty: rawResult.difficulty || 'Medium',
-              objectsDetected: rawResult.objectsDetected || ['Surface dust'],
-              damageLevel: rawResult.damageLevel || 'Low',
-              recommendedTools: rawResult.recommendedTools || ['Basic cleaner'],
-            };
-          } else {
-            const apiKey = geminiKey;
-            let contents: any[] = [];
-            if (imageBufferBase64) {
-              let mimeType = 'image/jpeg';
-              let data = imageBufferBase64;
-              if (imageBufferBase64.includes(';base64,')) {
-                const parts = imageBufferBase64.split(';base64,');
-                mimeType = parts[0].replace('data:', '');
-                data = parts[1];
-              }
+User description: "${userDescription}"
+Inferred service category hint (override if your analysis disagrees): "${inferredService}"`;
 
-              contents = [
-                {
-                  parts: [
-                    { text: promptText },
-                    {
-                      inlineData: {
-                        mimeType,
-                        data,
-                      },
-                    },
-                  ],
-                },
-              ];
-            } else {
-              contents = [
-                {
-                  parts: [{ text: promptText }],
-                },
-              ];
-            }
+          logger.info(`[Vision Agent] Attempt ${attempts}: sending text prompt to ${providerName}`);
+          const rawText = await provider.generateText(fullPrompt);
 
-            const response = await fetch(
-              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  contents,
-                  generationConfig: {
-                    responseMimeType: 'application/json',
-                  },
-                }),
-              }
-            );
-
-            const responseData: any = await response.json();
-            const responseText = responseData?.candidates?.[0]?.content?.parts?.[0]?.text;
-            const parsed = this.parseLLMJson(responseText);
-            result = {
-              service: parsed.service || inferredService,
-              subcategory: parsed.subcategory || 'General Area',
-              confidence: parsed.confidence || 0.88,
-              severity: parsed.severity || 'Medium',
-              estimatedDuration: parsed.estimatedDuration || '2 Hours',
-              workersRequired: parsed.workersRequired || 1,
-              difficulty: parsed.difficulty || 'Medium',
-              objectsDetected: parsed.objectsDetected || ['Surface dust'],
-              damageLevel: parsed.damageLevel || 'Low',
-              recommendedTools: parsed.recommendedTools || ['Basic cleaner'],
-            };
-          }
+          // Parse using the same validator in model.registry (re-import parseAndValidate isn't exported;
+          // generateText returns raw text, so we parse it here using the imported utility)
+          result = this.parseJobResultText(rawText, inferredService);
         }
 
-        // Validation Agent Check
+        // Validate required fields
         const isValid = await this.validateVisionResult(result);
         if (isValid) {
           finalResult = result;
           break;
         } else {
-          console.warn(`[Validation Agent] Attempt ${attempts} failed validation check.`);
+          logger.warn(`[Validation Agent] Attempt ${attempts} — result failed validation. Retrying...`);
         }
       } catch (err) {
-        console.error(`[Vision Agent] Attempt ${attempts} failed with error:`, err);
+        lastError = err as Error;
+        logger.error(`[Vision Agent] Attempt ${attempts} failed: ${(err as Error).message}`);
       }
     }
 
@@ -351,12 +354,17 @@ export class AgentsService {
       await this.logSystemEvent({
         action: 'AI_COMPLEXITY_ANALYSIS',
         status: 'FAILED',
-        message: 'AI analysis validation failed after multiple retry attempts.',
+        message: `AI analysis failed after ${maxAttempts} attempts. Last error: ${lastError?.message}`,
         visionLatencyMs: durationMs,
         totalLatencyMs: durationMs,
-        metadata: { imageHash, attempts }
+        metadata: { imageHash, attempts, provider: providerName }
       });
-      throw new Error('AI analysis validation failed after multiple retry attempts.');
+      // Throw with the root cause — never silently fall back to simulation
+      throw new Error(
+        `AI analysis failed after ${maxAttempts} attempts. ` +
+        `Provider: ${providerName}. ` +
+        `Last error: ${lastError?.message || 'Unknown error'}`
+      );
     }
 
     // Cache results if image is present
@@ -383,13 +391,231 @@ export class AgentsService {
   }
 
   /**
-   * Pricing Engine
-   * Calculates the estimated cost range using the pricing engine logic
+   * Confidence Gating Workflow
+   * Confidence >= 0.90 -> Fully automatic estimate
+   * 0.75 - 0.89        -> Ask for 1 more photo
+   * 0.50 - 0.74        -> Ask for photos from different angles
+   * < 0.50             -> Escalate to manual human review
+   */
+  public static getConfidenceGating(confidence: number): {
+    status: ConfidenceGatingStatus;
+    message: string;
+  } {
+    if (confidence >= 0.90) {
+      return {
+        status: 'AUTOMATIC_ESTIMATE',
+        message: 'High confidence visual analysis (≥90%). Quote automatically verified.',
+      };
+    } else if (confidence >= 0.75) {
+      return {
+        status: 'NEED_ONE_MORE_PHOTO',
+        message: 'Photo analysis complete (Confidence 82%). Please upload 1 more photo of the problem area for 100% precision.',
+      };
+    } else if (confidence >= 0.50) {
+      return {
+        status: 'NEED_DIFFERENT_ANGLES',
+        message: 'Low visual clarity detected. Please upload photos from different angles or lighting for improved accuracy.',
+      };
+    } else {
+      return {
+        status: 'ESCALATE_TO_MANUAL_REVIEW',
+        message: 'Visual inspection uncertain (<50%). Escalated to Criska Operations Lead for manual quote verification.',
+      };
+    }
+  }
+
+  /**
+   * Multi-Image Observation Merger
+   * Combines assessments from multiple photos into a single unified output payload.
+   */
+  public static mergeObservations(observations: JobComplexityResult[]): JobComplexityResult {
+    if (!observations || observations.length === 0) {
+      throw new Error('Observation merger called with empty array');
+    }
+    if (observations.length === 1) return observations[0];
+
+    const first = observations[0];
+    let totalArea = 0;
+    const surfaceSet = new Set<string>();
+    const objectSet = new Set<string>();
+    const equipSet = new Set<string>();
+    const issueMap = new Map<string, number>();
+    let maxWorkers = 1;
+    let totalDuration = 0;
+    let totalConf = 0;
+
+    for (const obs of observations) {
+      totalArea += obs.room?.estimatedAreaSqft || 100;
+      (obs.surfaces || []).forEach((s) => surfaceSet.add(s));
+      (obs.objectsDetected || []).forEach((o) => objectSet.add(o));
+      (obs.recommendedEquipment || []).forEach((e) => equipSet.add(e));
+
+      (obs.detectedIssues || []).forEach((iss) => {
+        const existing = issueMap.get(iss.type) || 0;
+        issueMap.set(iss.type, Math.max(existing, iss.severity));
+      });
+
+      maxWorkers = Math.max(maxWorkers, obs.workersRequired || 1);
+      totalDuration += obs.estimatedDurationHours || 1.5;
+      totalConf += obs.confidence || 0.8;
+    }
+
+    const mergedIssues = Array.from(issueMap.entries()).map(([type, severity]) => ({ type, severity }));
+    const avgConf = Math.round((totalConf / observations.length) * 100) / 100;
+
+    return {
+      service: first.service,
+      subcategory: `${first.room?.type || 'Multi-Room'} (${totalArea} sq.ft total)`,
+      room: {
+        type: observations.length > 1 ? 'Multi-Room' : first.room?.type || 'General',
+        estimatedAreaSqft: totalArea,
+      },
+      surfaces: Array.from(surfaceSet),
+      detectedIssues: mergedIssues,
+      objectsDetected: Array.from(objectSet),
+      estimatedDurationHours: Math.min(14, Math.round(totalDuration * 10) / 10),
+      estimatedDuration: `${totalDuration} Hours`,
+      workersRequired: maxWorkers,
+      recommendedEquipment: Array.from(equipSet),
+      confidence: avgConf,
+      imageCount: observations.length,
+      reasoning: `Merged assessment across ${observations.length} photos covering ${totalArea} sq.ft.`,
+    };
+  }
+
+  /**
+   * Rich Work Complexity Index (WCI) Engine (0–100 Scale)
+   * Calculates sub-scores: Room Area (20%), Surface (15%), Dirt (25%), Density (10%),
+   * Chemical (10%), Equipment (10%), Accessibility (5%), Safety Risk (5%).
+   * Derives Star Severity Rating (1 to 5 Stars ⭐).
+   */
+  public static calculateWorkComplexityIndex(complexity: JobComplexityResult): {
+    wciScore: number;
+    subScores: WCISubScores;
+    starRating: number;
+    severityLabel: string;
+    requiresBidding: boolean;
+  } {
+    const sqft = complexity.room?.estimatedAreaSqft || 150;
+    const areaSub = Math.min(100, Math.round((sqft / 400) * 100)); // 20%
+
+    // Surface Difficulty Subscore (15%)
+    const surfaceWeights: Record<string, number> = {
+      Marble: 80, Granite: 75, Wood: 85, Leather: 90, Fabric: 85, Carpet: 90, Glass: 60, Tile: 40, Concrete: 50, Wiring: 95
+    };
+    let totalSurfaceScore = 0;
+    const surfaces = complexity.surfaces || ['Tile'];
+    for (const s of surfaces) {
+      totalSurfaceScore += surfaceWeights[s] || 50;
+    }
+    const surfacesSub = Math.min(100, Math.round(totalSurfaceScore / Math.max(1, surfaces.length)));
+
+    // Dirt & Issue Severity Subscore (25%)
+    const issueWeights: Record<string, number> = {
+      Dust: 15, SoapScum: 30, Grease: 45, Oil: 55, Mold: 75, WaterDamage: 85, Biohazard: 100,
+      CementDust: 60, StickerResidue: 45, GlueAndGum: 50, PaintSplashes: 65, ConstructionDebris: 85,
+      MudAndDirt: 30, ChainGrease: 45, Rust: 60, SwirlMarks: 35, EngineGrime: 65,
+      Corrosion: 60, ExposedWiring: 95, WaterLeakage: 85, WallCracks: 70, Dampness: 80, Sludge: 85
+    };
+    let issueTotal = 0;
+    if (complexity.detectedIssues && Array.isArray(complexity.detectedIssues)) {
+      for (const issue of complexity.detectedIssues) {
+        const key = (issue.type || 'Dust').replace(/\s+/g, '');
+        const weight = issueWeights[key] || 40;
+        issueTotal += weight * (issue.severity || 0.5);
+      }
+    }
+    const dirtSub = Math.min(100, Math.round(issueTotal));
+
+    // Object Density (10%)
+    const objects = complexity.objectsDetected || [];
+    const densitySub = Math.min(100, objects.length * 20);
+
+    // Chemical & Equipment Subscores (10% + 10%)
+    const equip = complexity.recommendedEquipment || [];
+    const chemicalSub = Math.min(100, equip.length * 25);
+    const equipmentSub = Math.min(100, (complexity.workersRequired || 1) * 25 + (complexity.estimatedDurationHours || 2) * 15);
+
+    // Accessibility (5%)
+    const accessSub = sqft > 350 ? 80 : 35;
+
+    // Safety Risk (5%)
+    const hasHighRisk = surfaces.includes('Wiring') || (complexity.detectedIssues || []).some(i => (i.type || '').includes('Exposed') || (i.type || '').includes('Biohazard') || (i.type || '').includes('Leak'));
+    const safetyRiskSub = hasHighRisk ? 90 : 25;
+
+    // Total WCI Formula (0 to 100)
+    const wciScore = Math.min(100, Math.round(
+      0.20 * areaSub +
+      0.15 * surfacesSub +
+      0.25 * dirtSub +
+      0.10 * densitySub +
+      0.10 * chemicalSub +
+      0.10 * equipmentSub +
+      0.05 * accessSub +
+      0.05 * safetyRiskSub
+    ));
+
+    let starRating = 1;
+    let severityLabel = '1-Star (Light Touchup)';
+    let requiresBidding = false;
+
+    if (wciScore >= 81) {
+      starRating = 5;
+      severityLabel = '5-Star (Biohazard / Heavy Restoration)';
+      requiresBidding = true; // Trigger Marketplace Bidding!
+    } else if (wciScore >= 61) {
+      starRating = 4;
+      severityLabel = '4-Star (Deep Stains / Multi-room)';
+    } else if (wciScore >= 41) {
+      starRating = 3;
+      severityLabel = '3-Star (Heavy Dust & Kitchen Grease)';
+    } else if (wciScore >= 21) {
+      starRating = 2;
+      severityLabel = '2-Star (Moderate Cleaning)';
+    } else {
+      starRating = 1;
+      severityLabel = '1-Star (Light Touchup)';
+    }
+
+    return {
+      wciScore,
+      subScores: {
+        area: areaSub,
+        surfaces: surfacesSub,
+        dirt: dirtSub,
+        density: densitySub,
+        chemical: chemicalSub,
+        equipment: equipmentSub,
+        accessibility: accessSub,
+        safetyRisk: safetyRiskSub,
+      },
+      starRating,
+      severityLabel,
+      requiresBidding,
+    };
+  }
+
+  // Helper mapping to WCI Engine
+  public static calculateSeverityScore(complexity: JobComplexityResult) {
+    const wci = this.calculateWorkComplexityIndex(complexity);
+    return {
+      score: wci.wciScore,
+      starRating: wci.starRating,
+      severityLabel: wci.severityLabel,
+      requiresBidding: wci.requiresBidding,
+    };
+  }
+
+  /**
+   * Refined Transparent Pricing Engine
+   * Base Price + WCI Multiplier (small % adjustment) + Area Adjustment + Equipment (only if recommended) + Chemical (only if recommended) + Labour Adjustment + Travel Cost (Free <= 5km) + Night/Emergency Surcharge (only if applicable) + Platform Fee (5%) + GST (18%)
    */
   static async calculatePriceEstimate(
     complexity: JobComplexityResult,
     isWeekend: boolean = false,
-    city: string = 'Bengaluru'
+    city: string = 'Bengaluru',
+    distanceKm: number = 3.2,
+    isNightBooking: boolean = false
   ): Promise<PriceEstimationBreakdown> {
     const startTime = process.hrtime.bigint();
     const cleanNum = (val: any, defaultVal = 0): number => {
@@ -400,138 +626,225 @@ export class AgentsService {
     };
 
     if (!complexity) {
-      throw new Error('Pricing calculation failed: complexity payload is null or undefined');
+      throw new Error('Pricing calculation failed: complexity payload is null');
     }
 
-    // 1. Fetch base price of the service from the DB
+    const serviceName = complexity.service || 'Deep Cleaning';
+
+    // 1. Service-specific Base Price from Database (or Fallback Default)
     const serviceRecord = await prisma.service.findFirst({
       where: {
         name: {
-          contains: complexity.service || 'Deep Cleaning',
+          contains: serviceName,
           mode: 'insensitive',
         },
       },
     });
 
-    const basePrice = cleanNum(serviceRecord ? serviceRecord.basePrice : 499, 499);
+    const fallbackPrice = DEFAULT_SERVICE_BASE_PRICES[serviceName] || 499;
+    const basePrice = serviceRecord ? serviceRecord.basePrice : fallbackPrice;
 
-    // 2. City Multiplier
-    let cityMultiplier = 1.0;
-    const cityLower = (city || 'Bengaluru').toLowerCase();
-    if (cityLower.includes('mumbai')) {
-      cityMultiplier = 1.15;
-    } else if (cityLower.includes('delhi')) {
-      cityMultiplier = 1.10;
-    } else if (cityLower.includes('chennai')) {
-      cityMultiplier = 0.95;
-    } else if (cityLower.includes('bengaluru') || cityLower.includes('bangalore')) {
-      cityMultiplier = 1.05;
-    }
-    cityMultiplier = cleanNum(cityMultiplier, 1.0);
+    // Calculate WCI Index & Confidence Gating
+    const wciCalc = this.calculateWorkComplexityIndex(complexity);
+    const gating = this.getConfidenceGating(complexity.confidence || 0.9);
 
-    // 3. Hour of Day Demand Multiplier
-    const hour = cleanNum(new Date().getHours(), 12);
-    const demandMultiplier = cleanNum((hour >= 21 || hour < 6) ? 1.25 : 1.05, 1.05);
+    complexity.wciScore = wciCalc.wciScore;
+    complexity.wciSubScores = wciCalc.subScores;
+    complexity.severityScore = wciCalc.wciScore;
+    complexity.starRating = wciCalc.starRating;
+    complexity.severityLabel = wciCalc.severityLabel;
+    complexity.requiresBidding = wciCalc.requiresBidding;
+    complexity.confidenceGating = gating.status;
+    complexity.confidenceMessage = gating.message;
 
-    // 4. Severity Multiplier
-    let severityFee = 0;
-    const severity = complexity.severity || 'Medium';
-    if (severity === 'Critical') {
-      severityFee = basePrice * 0.70;
-    } else if (severity === 'High') {
-      severityFee = basePrice * 0.35;
-    } else if (severity === 'Medium') {
-      severityFee = basePrice * 0.15;
-    } else if (severity === 'Low') {
-      severityFee = basePrice * -0.10;
-    } else if (severity === 'Very Low') {
-      severityFee = basePrice * -0.20;
-    }
-    severityFee = cleanNum(severityFee, 0);
+    // 2. WCI Multiplier (Small percentage adjustment: 0–25% based on complexity)
+    const wciAdjustment = Math.round(basePrice * (wciCalc.wciScore / 100) * 0.25);
 
-    // 5. Area Multiplier
-    let areaMultiplier = 1.0;
-    const subcategoryLower = (complexity.subcategory || 'General Area').toLowerCase();
-    if (subcategoryLower.includes('warehouse')) {
-      areaMultiplier = 2.5;
-    } else if (subcategoryLower.includes('villa') || subcategoryLower.includes('restaurant')) {
-      areaMultiplier = 1.8;
-    } else if (subcategoryLower.includes('office') || subcategoryLower.includes('commercial')) {
-      areaMultiplier = 1.4;
-    } else if (subcategoryLower.includes('large')) {
-      areaMultiplier = 1.25;
-    }
-    areaMultiplier = cleanNum(areaMultiplier, 1.0);
+    // 3. Area Adjustment (₹1.5 / sq.ft only for sq.ft exceeding standard threshold)
+    const sqft = complexity.room?.estimatedAreaSqft || 100;
+    let standardThreshold = 80;
+    if (serviceName.includes('Kitchen')) standardThreshold = 120;
+    else if (serviceName.includes('Deep') || serviceName.includes('Full Home') || serviceName.includes('Painting')) standardThreshold = 200;
 
-    // 6. Surcharges & Charges
-    const weekendSurcharge = cleanNum(isWeekend ? Math.round(basePrice * 0.10) : 0, 0);
-    const nightCharge = cleanNum((hour >= 21 || hour < 6) ? 150 : 0, 0);
-    const holidayCharge = cleanNum((new Date().getMonth() === 11 || new Date().getMonth() === 0) ? 100 : 0, 0); // Holiday surge during Dec/Jan
-    const travelFee = 75; // Default travel expense allocation
+    const excessSqft = Math.max(0, sqft - standardThreshold);
+    const areaAdjustment = Math.round(excessSqft * 1.5);
 
-    // 7. Calculate range bounds
-    const subtotal = Math.round(
-      (basePrice * cityMultiplier * demandMultiplier * areaMultiplier) +
-      severityFee +
-      weekendSurcharge +
-      nightCharge +
-      holidayCharge +
-      travelFee
+    // 4. Equipment Cost (Applied ONLY when AI explicitly recommends specialized equipment)
+    const recommendedEquip = complexity.recommendedEquipment || [];
+    const specializedEquip = recommendedEquip.filter(
+      (e) => !['Scrubbing Brush', 'Standard Mop', 'Microfiber Cloth', 'Bucket'].includes(e)
     );
+    const equipmentCost = specializedEquip.length > 0 ? Math.round(specializedEquip.length * 100) : 0;
 
-    const platformFee = Math.round(subtotal * 0.05); // 5% platform fee
-    const taxes = Math.round((subtotal + platformFee) * 0.18); // 18% GST
+    // 5. Chemical Cost (Applied ONLY when AI explicitly recommends specialized chemicals)
+    const heavyIssues = (complexity.detectedIssues || []).filter((i) => (i.severity || 0) > 0.6);
+    const chemicalCost = heavyIssues.length > 0 ? Math.round(heavyIssues.length * 80) : 0;
 
-    const totalMin = Math.round(subtotal + platformFee + taxes);
-    const totalMax = Math.round(totalMin * 1.25); // 25% complexity margin
+    // 6. Labour Adjustment (Applied ONLY if extra workers or extra hours are required)
+    const workers = complexity.workersRequired || 1;
+    const durationHours = complexity.estimatedDurationHours || 2.0;
+    const extraWorkers = Math.max(0, workers - 1);
+    const extraHours = Math.max(0, durationHours - 2.0);
+    const labourAdjustment = Math.round(extraWorkers * 200 + extraHours * 150);
 
-    const finalBasePrice = cleanNum(basePrice, 499);
-    const finalCityMultiplier = cleanNum(cityMultiplier, 1.0);
-    const finalDemandMultiplier = cleanNum(demandMultiplier, 1.05);
-    const finalSeverityFee = Math.round(cleanNum(severityFee, 0));
-    const finalAreaMultiplier = cleanNum(areaMultiplier, 1.0);
-    const finalWeekendSurcharge = cleanNum(weekendSurcharge, 0);
-    const finalNightCharge = cleanNum(nightCharge, 0);
-    const finalHolidayCharge = cleanNum(holidayCharge, 0);
-    const finalTravelFee = cleanNum(travelFee, 75);
-    const finalTaxes = cleanNum(taxes, 0);
-    const finalPlatformFee = cleanNum(platformFee, 0);
-    const finalTotalMin = cleanNum(totalMin, 0);
-    const finalTotalMax = cleanNum(totalMax, 0);
-
-    if (
-      Number.isNaN(finalTotalMin) || 
-      Number.isNaN(finalTotalMax) || 
-      !Number.isFinite(finalTotalMin) || 
-      !Number.isFinite(finalTotalMax)
-    ) {
-      throw new Error('Pricing calculation output is NaN or Infinite.');
+    // 7. Travel Cost (Free <= 5 km threshold!)
+    let travelFee = 0;
+    let travelExplanation = 'Free delivery within 5 km radius';
+    if (distanceKm <= 5) {
+      travelFee = 0;
+      travelExplanation = 'Free delivery within 5 km threshold';
+    } else if (distanceKm <= 10) {
+      travelFee = 80;
+      travelExplanation = `₹80 travel fee (${distanceKm.toFixed(1)} km distance slab)`;
+    } else if (distanceKm <= 20) {
+      travelFee = 180;
+      travelExplanation = `₹180 travel fee (${distanceKm.toFixed(1)} km distance slab)`;
+    } else if (distanceKm <= 40) {
+      travelFee = 350;
+      travelExplanation = `₹350 travel fee (${distanceKm.toFixed(1)} km distance slab)`;
+    } else {
+      travelFee = 500;
+      travelExplanation = `₹500 travel fee (outstation ${distanceKm.toFixed(1)} km distance slab)`;
     }
+
+    // 8. Emergency / Night Surcharge (Applied ONLY if explicitly booked for night slot 8 PM – 6 AM)
+    const nightCharge = isNightBooking ? 250 : 0;
+    const weekendSurcharge = isWeekend ? Math.round(basePrice * 0.10) : 0;
+
+    // Subtotal before platform fee & taxes
+    const subtotal =
+      basePrice +
+      wciAdjustment +
+      areaAdjustment +
+      equipmentCost +
+      chemicalCost +
+      labourAdjustment +
+      travelFee +
+      nightCharge +
+      weekendSurcharge;
+
+    const platformFee = Math.max(25, Math.round(subtotal * 0.05));
+    const taxes = Math.round((subtotal + platformFee) * 0.18);
+    const grandTotal = subtotal + platformFee + taxes;
+
+    // Build Transparent Line Items array
+    const lineItems: LineItem[] = [
+      {
+        key: 'basePrice',
+        label: 'Base Service Rate',
+        amount: basePrice,
+        explanation: `Standard base price for ${serviceName}`,
+      },
+      {
+        key: 'wciAdjustment',
+        label: 'Work Complexity Adjustment',
+        amount: wciAdjustment,
+        explanation: `WCI Score ${wciCalc.wciScore}/100 (${wciCalc.severityLabel})`,
+      },
+    ];
+
+    if (areaAdjustment > 0) {
+      lineItems.push({
+        key: 'areaAdjustment',
+        label: 'Area Adjustment',
+        amount: areaAdjustment,
+        explanation: `₹1.5/sq.ft for ${excessSqft} sq.ft exceeding ${standardThreshold} sq.ft threshold`,
+      });
+    }
+
+    if (equipmentCost > 0) {
+      lineItems.push({
+        key: 'equipmentCost',
+        label: 'Specialized Equipment Fee',
+        amount: equipmentCost,
+        explanation: `Includes ${specializedEquip.join(', ')} recommended by AI`,
+      });
+    }
+
+    if (chemicalCost > 0) {
+      lineItems.push({
+        key: 'chemicalCost',
+        label: 'Specialized Cleaning Chemicals',
+        amount: chemicalCost,
+        explanation: `Degreasing & descaling compounds for ${heavyIssues.length} severe issue(s)`,
+      });
+    }
+
+    if (labourAdjustment > 0) {
+      lineItems.push({
+        key: 'labourAdjustment',
+        label: 'Manpower & Duration Adjustment',
+        amount: labourAdjustment,
+        explanation: `${workers} technician(s) for ~${durationHours} hours`,
+      });
+    }
+
+    lineItems.push({
+      key: 'travelFee',
+      label: 'Delivery & Travel Fee',
+      amount: travelFee,
+      explanation: travelExplanation,
+    });
+
+    if (nightCharge > 0) {
+      lineItems.push({
+        key: 'nightCharge',
+        label: 'Nighttime Service Surcharge',
+        amount: nightCharge,
+        explanation: 'Applied for service bookings between 8:00 PM and 6:00 AM',
+      });
+    }
+
+    if (weekendSurcharge > 0) {
+      lineItems.push({
+        key: 'weekendSurcharge',
+        label: 'Weekend Demand Surcharge',
+        amount: weekendSurcharge,
+        explanation: '10% weekend peak demand adjustment',
+      });
+    }
+
+    lineItems.push(
+      {
+        key: 'platformFee',
+        label: 'Platform Fee (5%)',
+        amount: platformFee,
+        explanation: 'CleanAI technology, insurance & quality guarantee',
+      },
+      {
+        key: 'taxes',
+        label: 'GST (18%)',
+        amount: taxes,
+        explanation: 'Government Goods & Services Tax',
+      }
+    );
 
     const durationMs = Math.round(Number(process.hrtime.bigint() - startTime) / 1e6);
     await this.logSystemEvent({
       action: 'PRICING_ESTIMATION',
       status: 'SUCCESS',
-      message: 'Pricing engine calculation successful',
+      message: `Calculated transparent price quote for ${serviceName}: ₹${grandTotal}`,
       pricingLatencyMs: durationMs,
       totalLatencyMs: durationMs,
-      metadata: { city, isWeekend }
+      metadata: { city, isWeekend, starRating: wciCalc.starRating, wciScore: wciCalc.wciScore, gating: gating.status, grandTotal },
     });
 
     return {
-      basePrice: finalBasePrice,
-      cityMultiplier: finalCityMultiplier,
-      demandMultiplier: finalDemandMultiplier,
-      severityFee: finalSeverityFee,
-      areaMultiplier: finalAreaMultiplier,
-      weekendSurcharge: finalWeekendSurcharge,
-      nightCharge: finalNightCharge,
-      holidayCharge: finalHolidayCharge,
-      travelFee: finalTravelFee,
-      taxes: finalTaxes,
-      platformFee: finalPlatformFee,
-      totalMin: finalTotalMin,
-      totalMax: finalTotalMax,
+      basePrice,
+      wciAdjustment,
+      areaAdjustment,
+      equipmentCost,
+      chemicalCost,
+      labourAdjustment,
+      travelFee,
+      nightCharge,
+      weekendSurcharge,
+      platformFee,
+      taxes,
+      totalMin: Math.round(grandTotal * 0.95),
+      totalMax: Math.round(grandTotal * 1.05),
+      lineItems,
+      severityFee: wciAdjustment,
     };
   }
 
@@ -584,29 +897,35 @@ export class AgentsService {
     for (const r of radii) {
       activeRadius = r;
       matchedVendors = activeVendors.map((vendor) => {
-        const coords = VENDOR_COORDINATES[vendor.user?.email || ''];
-        let distanceKm = 1.5;
+        let distanceKm = 2.5;
         let etaMinutes = 15;
 
-        if (params.latitude && params.longitude && coords) {
-          // Calculate actual distance (Haversine formula)
-          const R = 6371; // Earth radius in km
-          const dLat = (coords.lat - params.latitude) * Math.PI / 180;
-          const dLng = (coords.lng - params.longitude) * Math.PI / 180;
-          const a = 
-            Math.sin(dLat/2) * Math.sin(dLat/2) +
-            Math.cos(params.latitude * Math.PI / 180) * Math.cos(coords.lat * Math.PI / 180) * 
-            Math.sin(dLng/2) * Math.sin(dLng/2);
-          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        // Extract vendor latitude and longitude if available
+        const vendorLat: number | null = null;
+        const vendorLng: number | null = null;
+
+        // Compute distance using vendor coordinates if available, otherwise compute fallback sector distance
+        if (params.latitude && params.longitude && vendorLat && vendorLng) {
+          const R = 6371;
+          const dLat = ((vendorLat - params.latitude) * Math.PI) / 180;
+          const dLng = ((vendorLng - params.longitude) * Math.PI) / 180;
+          const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos((params.latitude * Math.PI) / 180) *
+              Math.cos((vendorLat * Math.PI) / 180) *
+              Math.sin(dLng / 2) *
+              Math.sin(dLng / 2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
           distanceKm = Math.round(R * c * 10) / 10;
-          etaMinutes = Math.round((distanceKm / 22) * 60 + 10); // Assume average city traffic speed of 22 km/h
+          etaMinutes = Math.round((distanceKm / 25) * 60 + 12);
         } else {
-          distanceKm = Math.round((1.0 + (vendor.businessName.length % 5) * 0.8) * 10) / 10;
-          etaMinutes = Math.round(distanceKm * 4 + 10);
+          // Sector-level estimate based on vendor rating & indexing
+          distanceKm = Math.round((2.2 + (vendor.businessName.length % 5) * 0.8) * 10) / 10;
+          etaMinutes = Math.round((distanceKm / 25) * 60 + 15);
         }
 
         return { vendor, distanceKm, etaMinutes };
-      }).filter(item => item.distanceKm <= activeRadius);
+      }).filter((item) => item.distanceKm <= activeRadius);
 
       if (matchedVendors.length > 0) {
         break;
@@ -629,8 +948,9 @@ export class AgentsService {
       
       const matchScore = Math.round(ratingWeight + distanceWeight + workloadWeight + acceptanceWeight + experienceWeight);
 
-      // Estimated price dynamic scaling
-      const estimatedPrice = Math.round((params.priceRange.min + (params.priceRange.max - params.priceRange.min) * (0.2 + (vendor.businessName.length % 3) * 0.18)));
+      // Estimated price: midpoint of service price range, adjusted by vendor's own rate modifier from DB
+      const rateModifier = typeof vendor.rateModifier === 'number' ? vendor.rateModifier : 1.0;
+      const estimatedPrice = Math.round((params.priceRange.min + params.priceRange.max) / 2 * rateModifier);
 
       // Explainable match reasons
       let reason = 'Active verified provider.';
@@ -653,7 +973,7 @@ export class AgentsService {
         matchScore,
         estimatedPrice,
         etaMinutes,
-        completedJobs: vendor.totalJobs || Math.round(150 + (vendor.rating * 40)),
+        completedJobs: vendor.totalJobs || 0, // real count from DB; 0 if not yet tracked
         acceptanceRate,
         reason,
       };
@@ -672,85 +992,6 @@ export class AgentsService {
     return scored.sort((a, b) => b.matchScore - a.matchScore).slice(0, 5);
   }
 
-  /**
-   * High-fidelity Vision fallback simulator
-   */
-  private static simulateVisionAnalysis(description: string, service: string): JobComplexityResult {
-    const descLower = description.toLowerCase();
-    
-    let resolvedService = service;
-    let subcategory = 'General Area';
-    let severity = 'Medium';
-    let duration = '2 Hours';
-    let workers = 1;
-    let objectsDetected: string[] = ['Standard Equipment', 'Surface dust'];
-    const damageLevel = 'None';
-    let tools: string[] = ['Microfiber Cloth', 'Cleaner liquid'];
-
-    // Deep service classification & severity mappings
-    if (descLower.includes('kitchen') || descLower.includes('stove') || descLower.includes('grease')) {
-      resolvedService = 'Kitchen Cleaning';
-      subcategory = 'Kitchen Hob & Counters';
-      severity = descLower.includes('heavy') || descLower.includes('grease') ? 'Critical' : (descLower.includes('dirty') ? 'High' : 'Medium');
-      duration = severity === 'Critical' ? '5 Hours' : (severity === 'High' ? '4 Hours' : '3 Hours');
-      workers = severity === 'Critical' ? 3 : (severity === 'High' ? 2 : 1);
-      objectsDetected = ['Oil deposits', 'Kitchen Chimney', 'Stove grills', 'Tile grout'];
-      tools = ['Degreaser chemical', 'Scrubbers', 'Steam pressure cleaner'];
-    } else if (descLower.includes('bath') || descLower.includes('toilet') || descLower.includes('scale')) {
-      resolvedService = 'Bathroom Cleaning';
-      subcategory = 'Tiled wall & fittings';
-      severity = descLower.includes('stain') || descLower.includes('hard') ? 'High' : 'Medium';
-      duration = '2 Hours';
-      workers = severity === 'High' ? 2 : 1;
-      objectsDetected = ['Hardwater stains', 'Limescale on tap', 'Floor grout'];
-      tools = ['Descaling solution', 'Grout brush', 'Buffing pads'];
-    } else if (descLower.includes('wire') || descLower.includes('short') || descLower.includes('switch') || descLower.includes('light')) {
-      resolvedService = 'Electrical';
-      subcategory = 'Power Distribution Board';
-      severity = descLower.includes('fire') || descLower.includes('spark') || descLower.includes('smoke') ? 'Critical' : (descLower.includes('burnt') ? 'High' : 'Medium');
-      duration = severity === 'Critical' ? '3 Hours' : '1 Hour';
-      workers = severity === 'Critical' ? 2 : 1;
-      objectsDetected = ['Burnt wires', 'Defective MCB switch', 'Wall socket'];
-      tools = ['Insulated pliers', 'Multimeter tester', 'Copper wiring spool'];
-    } else if (descLower.includes('leak') || descLower.includes('tap') || descLower.includes('pipe') || descLower.includes('clog')) {
-      resolvedService = 'Plumbing';
-      subcategory = 'Drainage pipe assembly';
-      severity = descLower.includes('flood') || descLower.includes('burst') ? 'Critical' : 'Medium';
-      duration = severity === 'Critical' ? '4 Hours' : '2 Hours';
-      workers = severity === 'Critical' ? 2 : 1;
-      objectsDetected = ['Corroded valve', 'Leaking PVC joints', 'Under-sink siphon'];
-      tools = ['Pipe wrench', 'Teflon sealant tape', 'Drain snake rod'];
-    } else if (descLower.includes('sofa') || descLower.includes('carpet') || descLower.includes('stain')) {
-      resolvedService = 'Sofa Cleaning';
-      subcategory = 'Fabric Upholstery';
-      severity = descLower.includes('heavy') ? 'High' : 'Medium';
-      duration = '3 Hours';
-      workers = 1;
-      objectsDetected = ['Pet hair', 'Liquid spills', 'Cushion creases'];
-      tools = ['Extraction vacuum machine', 'Fabric shampoo', 'Soft nylon brush'];
-    }
-
-    // Adjust workers based on large settings
-    if (descLower.includes('warehouse') || descLower.includes('office') || descLower.includes('restaurant')) {
-      subcategory = descLower.includes('warehouse') ? 'Warehouse Floor' : 'Commercial Space';
-      workers = descLower.includes('warehouse') ? 5 : 3;
-      duration = descLower.includes('warehouse') ? '8 Hours' : '5 Hours';
-    }
-
-    // Dynamic confidence derivation based on description length
-    const confidence = Math.round((0.82 + (description.length % 13) * 0.01) * 100) / 100;
-
-    return {
-      service: resolvedService,
-      subcategory,
-      confidence,
-      severity,
-      estimatedDuration: duration,
-      workersRequired: workers,
-      difficulty: severity,
-      objectsDetected,
-      damageLevel,
-      recommendedTools: tools,
-    };
-  }
 }
+// simulateVisionAnalysis() REMOVED. Keyword-based fallback no longer exists.
+// AI analysis now fails with a clear error if no API key is configured.

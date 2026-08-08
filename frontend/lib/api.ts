@@ -29,12 +29,10 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
       headers,
     });
   } catch (err: any) {
-    console.error('[API Fetch Error] Connection failed:', {
-      url: `${API_BASE_URL}${endpoint}`,
-      method: options.method || 'GET',
-      error: err.message || String(err)
-    });
-    throw new Error(`Backend unreachable. Connection failed to: ${API_BASE_URL}${endpoint}. Details: ${err.message || 'Connection refused'}`);
+    // err is a TypeError from fetch (e.g. "Failed to fetch", "ECONNREFUSED")
+    const errMsg = err?.message || String(err) || 'Connection refused';
+    console.error(`[API] Cannot reach backend at ${API_BASE_URL}${endpoint} — ${errMsg}`);
+    throw new Error(`Backend unreachable (${errMsg}). Make sure the server is running on port 4000.`);
   }
 
   if (res.status === 401 && typeof window !== 'undefined') {

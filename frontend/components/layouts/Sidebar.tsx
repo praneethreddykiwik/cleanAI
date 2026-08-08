@@ -51,6 +51,7 @@ const CUSTOMER_NAV: SidebarNavItem[] = [
   { label: 'My Bookings', href: '/customer/bookings', icon: Calendar },
   { label: 'Notifications', href: '/customer/notifications', icon: Bell },
   { label: 'Profile', href: '/customer/profile', icon: User },
+  { label: 'Settings', href: '/customer/settings', icon: Settings },
 ];
 
 const VENDOR_NAV: SidebarNavItem[] = [
@@ -231,116 +232,118 @@ export function Sidebar({ role, className }: SidebarProps) {
   };
 
   return (
-    <motion.aside
-      animate={{ width: isCollapsed ? 72 : 248 }}
-      transition={{ type: 'spring', stiffness: 350, damping: 30 }}
-      className={cn(
-        'relative flex flex-col border-r border-border/40 glass-1 h-screen sticky top-0 shrink-0 overflow-hidden select-none',
-        className
-      )}
-    >
-      {/* Brand Header */}
-      <div
+    <div className="relative flex h-screen sticky top-0 shrink-0 z-20">
+      <motion.aside
+        animate={{ width: isCollapsed ? 72 : 248 }}
+        transition={{ type: 'spring', stiffness: 350, damping: 30 }}
         className={cn(
-          'flex items-center h-16 px-4 border-b border-border/30 shrink-0 gap-2.5',
-          isCollapsed ? 'justify-center' : 'justify-between'
+          'flex flex-col border-r border-border/40 glass-1 h-full shrink-0 overflow-hidden select-none',
+          className
         )}
       >
-        <Link href={`/${role}/dashboard`} className="flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2 rounded-lg">
-          <div className="w-8 h-8 bg-gradient-to-br from-primary to-blue-600 rounded-xl flex items-center justify-center shrink-0 shadow-[var(--shadow-primary)]">
-            <Home size={15} className="text-primary-foreground" />
-          </div>
-          <AnimatePresence initial={false}>
-            {!isCollapsed && (
-              <motion.div
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -8 }}
-                transition={{ duration: 0.15 }}
-                className="flex items-baseline"
-              >
-                <span className="font-extrabold text-[15px] tracking-tight text-foreground">Clean</span>
-                <span className="font-extrabold text-[15px] tracking-tight text-primary">AI</span>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </Link>
-
-        {!isCollapsed && (
-          <motion.span
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className={cn(
-              'text-[10px] font-semibold px-2 py-0.5 rounded-full border',
-              roleBadgeStyles[role]
-            )}
-          >
-            {roleText[role]}
-          </motion.span>
-        )}
-      </div>
-
-      {/* Main Navigation Links */}
-      <nav className="flex-1 py-4 overflow-y-auto scrollbar-none space-y-1">
-        <motion.div
-          variants={containerVariants}
-          initial="hidden"
-          animate="visible"
-          className="space-y-1"
-        >
-          {navItems.map((item, index) => (
-            <NavItem
-              key={item.href}
-              item={item}
-              isCollapsed={isCollapsed}
-              index={index}
-              role={role}
-            />
-          ))}
-        </motion.div>
-      </nav>
-
-      {/* Sidebar Profile Card Footer */}
-      <div className="border-t border-border/30 p-3 shrink-0">
+        {/* Brand Header */}
         <div
           className={cn(
-            'flex items-center gap-2.5 p-2 rounded-xl hover:bg-foreground/5 dark:hover:bg-white/5 cursor-pointer transition-colors duration-150',
-            isCollapsed ? 'justify-center' : ''
+            'flex items-center h-16 px-4 border-b border-border/30 shrink-0 gap-2.5',
+            isCollapsed ? 'justify-center' : 'justify-between'
           )}
-          onClick={logout}
-          title="Sign out"
         >
-          <Avatar className="w-7 h-7 shrink-0 ring-2 ring-border/40">
-            <AvatarImage src={user?.avatar} alt={user ? `${user.firstName} ${user.lastName}` : 'Account'} />
-            <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
-              {user ? `${user.firstName.charAt(0)}${user.lastName.charAt(0)}`.toUpperCase() : 'U'}
-            </AvatarFallback>
-          </Avatar>
-          <AnimatePresence initial={false}>
-            {!isCollapsed && (
-              <motion.div
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -8 }}
-                transition={{ duration: 0.15 }}
-                className="flex-1 min-w-0"
-              >
-                <p className="text-xs font-bold text-foreground truncate">
-                  {user ? `${user.firstName} ${user.lastName}` : 'Account'}
-                </p>
-                <p className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
-                  {user?.email}
-                </p>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      </div>
+          <Link href={`/${role}/dashboard`} className="flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2 rounded-lg">
+            <div className="w-8 h-8 bg-gradient-to-br from-primary to-blue-600 rounded-xl flex items-center justify-center shrink-0 shadow-[var(--shadow-primary)]">
+              <Home size={15} className="text-primary-foreground" />
+            </div>
+            <AnimatePresence initial={false}>
+              {!isCollapsed && (
+                <motion.div
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -8 }}
+                  transition={{ duration: 0.15 }}
+                  className="flex items-baseline"
+                >
+                  <span className="font-extrabold text-[15px] tracking-tight text-foreground">Clean</span>
+                  <span className="font-extrabold text-[15px] tracking-tight text-primary">AI</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </Link>
 
-      {/* Toggle button */}
+          {!isCollapsed && (
+            <motion.span
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className={cn(
+                'text-[10px] font-semibold px-2 py-0.5 rounded-full border',
+                roleBadgeStyles[role]
+              )}
+            >
+              {roleText[role]}
+            </motion.span>
+          )}
+        </div>
+
+        {/* Main Navigation Links */}
+        <nav className="flex-1 py-4 overflow-y-auto scrollbar-none space-y-1">
+          <motion.div
+            variants={containerVariants}
+            initial="hidden"
+            animate="visible"
+            className="space-y-1"
+          >
+            {navItems.map((item, index) => (
+              <NavItem
+                key={item.href}
+                item={item}
+                isCollapsed={isCollapsed}
+                index={index}
+                role={role}
+              />
+            ))}
+          </motion.div>
+        </nav>
+
+        {/* Sidebar Profile Card Footer */}
+        <div className="border-t border-border/30 p-3 shrink-0">
+          <div
+            className={cn(
+              'flex items-center gap-2.5 p-2 rounded-xl hover:bg-foreground/5 dark:hover:bg-white/5 cursor-pointer transition-colors duration-150',
+              isCollapsed ? 'justify-center' : ''
+            )}
+            onClick={logout}
+            title="Sign out"
+          >
+            <Avatar className="w-7 h-7 shrink-0 ring-2 ring-border/40">
+              <AvatarImage src={user?.avatar} alt={user ? `${user.firstName} ${user.lastName}` : 'Account'} />
+              <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
+                {user ? `${user.firstName.charAt(0)}${user.lastName.charAt(0)}`.toUpperCase() : 'U'}
+              </AvatarFallback>
+            </Avatar>
+            <AnimatePresence initial={false}>
+              {!isCollapsed && (
+                <motion.div
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -8 }}
+                  transition={{ duration: 0.15 }}
+                  className="flex-1 min-w-0"
+                >
+                  <p className="text-xs font-bold text-foreground truncate">
+                    {user ? `${user.firstName} ${user.lastName}` : 'Account'}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
+                    {user?.email}
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+      </motion.aside>
+
+      {/* Toggle button outside aside to prevent clipping */}
       <button
         onClick={() => setIsCollapsed(!isCollapsed)}
-        className="absolute -right-3 top-[74px] w-6 h-6 bg-card border border-border/60 rounded-full flex items-center justify-center shadow-md hover:bg-accent transition-colors duration-200 z-10"
+        className="absolute -right-3 top-[74px] w-6 h-6 bg-card border border-border/60 rounded-full flex items-center justify-center shadow-md hover:bg-accent transition-colors duration-200 z-50 cursor-pointer"
         aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
       >
         <motion.div
@@ -350,6 +353,6 @@ export function Sidebar({ role, className }: SidebarProps) {
           <ChevronRight size={11} className="text-muted-foreground" />
         </motion.div>
       </button>
-    </motion.aside>
+    </div>
   );
 }

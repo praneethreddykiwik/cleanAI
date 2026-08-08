@@ -68,10 +68,14 @@ agentRoutes.post('/', authMiddleware as any, authorizeRoles('VENDOR') as any, as
       return res.status(404).json({ success: false, message: 'Vendor profile not found' });
     }
 
-    const { email, phone, firstName, lastName, password = 'DefaultAgentPass123!', skills = [] } = req.body;
+    const { email, phone, firstName, lastName, password, skills = [] } = req.body;
 
-    if (!email || !phone || !firstName || !lastName) {
-      return res.status(400).json({ success: false, message: 'Missing required registration fields' });
+    if (!email || !phone || !firstName || !lastName || !password) {
+      return res.status(400).json({ success: false, message: 'Missing required registration fields (email, phone, firstName, lastName, password)' });
+    }
+
+    if (typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
     }
 
     // Check if user exists

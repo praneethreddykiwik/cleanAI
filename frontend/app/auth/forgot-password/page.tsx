@@ -10,6 +10,8 @@ import { Mail, ArrowLeft, Loader2, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { authCardVariants } from '@/lib/animations';
 import { cn } from '@/lib/utils';
+import { apiCall } from '@/lib/api';
+import { toast } from 'sonner';
 
 const forgotPasswordSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
@@ -31,10 +33,18 @@ export default function ForgotPasswordPage() {
 
   const onSubmit = async (data: ForgotPasswordForm) => {
     setIsSubmitting(true);
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    setIsSubmitting(false);
-    setIsSuccess(true);
+    try {
+      const res = await apiCall('/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ email: data.email }),
+      });
+      if (!res.success) throw new Error(res.message || 'Request failed');
+      setIsSuccess(true);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to send reset email. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

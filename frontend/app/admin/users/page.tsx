@@ -2,17 +2,7 @@
 
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
-import {
-  Users,
-  Search,
-  UserCheck,
-  UserX,
-  Eye,
-  Shield,
-  Phone,
-  Mail,
-  AlertTriangle,
-} from 'lucide-react';
+import { Search, UserCheck, UserX, Eye } from 'lucide-react';
 import { apiCall } from '@/lib/api';
 import { DashboardLayout } from '@/components/layouts/DashboardLayout';
 import { StatusBadge } from '@/components/shared/StatusBadge';
@@ -25,17 +15,6 @@ import {
 } from '@/lib/animations';
 import { formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
-
-// ==================
-// Mock Data
-// ==================
-const initialUsers = [
-  { id: '1', name: 'Vivek Shaganti', email: 'vivek@example.com', phone: '9876543210', role: 'CUSTOMER', status: 'ACTIVE', joined: new Date(Date.now() - 30 * 86400000).toISOString() },
-  { id: '2', name: 'Priya Sharma', email: 'priya@gmail.com', phone: '9988776655', role: 'CUSTOMER', status: 'ACTIVE', joined: new Date(Date.now() - 20 * 86400000).toISOString() },
-  { id: '3', name: 'CleanPro Owner', email: 'partner@cleanpro.in', phone: '9123456789', role: 'VENDOR', status: 'ACTIVE', joined: new Date(Date.now() - 15 * 86400000).toISOString() },
-  { id: '4', name: 'Ramesh Agent', email: 'ramesh@agent.in', phone: '9000111222', role: 'AGENT', status: 'ACTIVE', joined: new Date(Date.now() - 10 * 86400000).toISOString() },
-  { id: '5', name: 'Bad User', email: 'baduser@example.com', phone: '9555666777', role: 'CUSTOMER', status: 'SUSPENDED', joined: new Date(Date.now() - 5 * 86400000).toISOString() },
-];
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<any[]>([]);

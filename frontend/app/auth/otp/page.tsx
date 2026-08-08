@@ -1,16 +1,19 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { KeyRound, ArrowLeft, Loader2, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { authCardVariants } from '@/lib/animations';
+import { apiCall } from '@/lib/api';
 import { toast } from 'sonner';
 
-export default function OtpPage() {
+function OtpContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -50,10 +53,16 @@ export default function OtpPage() {
     }
   };
 
-  const handleResend = () => {
+  const handleResend = async () => {
     if (countdown > 0) return;
-    setCountdown(59);
-    toast.success('A new OTP has been sent to your registered mobile and email.');
+    const email = searchParams.get('email') || '';
+    try {
+      await apiCall('/auth/resend-otp', { method: 'POST', body: JSON.stringify({ email }) });
+      setCountdown(59);
+      toast.success('A new OTP has been sent to your registered email.');
+    } catch {
+      toast.error('Failed to resend OTP. Please try again.');
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -64,15 +73,24 @@ export default function OtpPage() {
       return;
     }
 
+    const email = searchParams.get('email') || '';
     setIsSubmitting(true);
-    // Simulate verification API call
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    setIsSubmitting(false);
-    setIsSuccess(true);
-
-    setTimeout(() => {
-      router.push('/customer/dashboard');
-    }, 1500);
+    try {
+      const res = await apiCall('/auth/verify-otp', {
+        method: 'POST',
+        body: JSON.stringify({ email, otp: pin }),
+      });
+      if (!res.success) throw new Error(res.message || 'OTP verification failed');
+      setIsSuccess(true);
+      // Redirect based on role returned from API, defaulting to customer dashboard
+      const role: string = res.data?.role || 'CUSTOMER';
+      const dest = role === 'VENDOR' ? '/vendor/dashboard' : role === 'ADMIN' ? '/admin/dashboard' : '/customer/dashboard';
+      setTimeout(() => router.push(dest), 1500);
+    } catch (err: any) {
+      toast.error(err.message || 'Invalid OTP. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -170,5 +188,13 @@ export default function OtpPage() {
         )}
       </div>
     </motion.div>
+  );
+}
+
+export default function OtpPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>}>
+      <OtpContent />
+    </Suspense>
   );
 }

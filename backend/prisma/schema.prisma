@@ -1,10 +1,12 @@
 generator client {
   provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x", "darwin-arm64"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -216,10 +218,11 @@ model Booking {
   totalAmount   Float
   platformFee   Float
   vendorAmount  Float
-  paymentStatus PaymentStatus          @default(PENDING)
-  couponId      String?
-  cancelReason  String?
-  completedAt   DateTime?
+  paymentStatus  PaymentStatus          @default(PENDING)
+  paymentMethod  String?                @default("UPI")  // UPI | CARD | COD
+  couponId       String?
+  cancelReason   String?
+  completedAt    DateTime?
   latitude      Float?
   longitude     Float?
   placeId       String?

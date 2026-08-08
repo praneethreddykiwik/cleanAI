@@ -61,6 +61,72 @@ const TIME_SLOTS = [
   '06:00 PM - 08:00 PM',
 ];
 
+const CATEGORY_THEMES: Record<string, {
+  gradient: string;
+  badgeBg: string;
+  badgeBorder: string;
+  badgeText: string;
+  glowShadow: string;
+  hoverBorder: string;
+}> = {
+  Cleaning: {
+    gradient: 'from-emerald-950/80 via-teal-900/40 to-transparent',
+    badgeBg: 'bg-emerald-500/25 backdrop-blur-md',
+    badgeBorder: 'border-emerald-300/40',
+    badgeText: 'text-emerald-200',
+    glowShadow: 'hover:shadow-2xl hover:shadow-emerald-500/15',
+    hoverBorder: 'hover:border-emerald-500/40',
+  },
+  'Home Improvement': {
+    gradient: 'from-amber-950/80 via-rose-900/40 to-transparent',
+    badgeBg: 'bg-amber-500/25 backdrop-blur-md',
+    badgeBorder: 'border-amber-300/40',
+    badgeText: 'text-amber-200',
+    glowShadow: 'hover:shadow-2xl hover:shadow-amber-500/15',
+    hoverBorder: 'hover:border-amber-500/40',
+  },
+  Repair: {
+    gradient: 'from-indigo-950/80 via-purple-900/40 to-transparent',
+    badgeBg: 'bg-indigo-500/25 backdrop-blur-md',
+    badgeBorder: 'border-indigo-300/40',
+    badgeText: 'text-indigo-200',
+    glowShadow: 'hover:shadow-2xl hover:shadow-indigo-500/15',
+    hoverBorder: 'hover:border-indigo-500/40',
+  },
+  Appliance: {
+    gradient: 'from-cyan-950/80 via-blue-900/40 to-transparent',
+    badgeBg: 'bg-cyan-500/25 backdrop-blur-md',
+    badgeBorder: 'border-cyan-300/40',
+    badgeText: 'text-cyan-200',
+    glowShadow: 'hover:shadow-2xl hover:shadow-cyan-500/15',
+    hoverBorder: 'hover:border-cyan-500/40',
+  },
+  'Home Care': {
+    gradient: 'from-rose-950/80 via-pink-900/40 to-transparent',
+    badgeBg: 'bg-rose-500/25 backdrop-blur-md',
+    badgeBorder: 'border-rose-300/40',
+    badgeText: 'text-rose-200',
+    glowShadow: 'hover:shadow-2xl hover:shadow-rose-500/15',
+    hoverBorder: 'hover:border-rose-500/40',
+  },
+  Outdoor: {
+    gradient: 'from-green-950/80 via-emerald-900/40 to-transparent',
+    badgeBg: 'bg-green-500/25 backdrop-blur-md',
+    badgeBorder: 'border-green-300/40',
+    badgeText: 'text-green-200',
+    glowShadow: 'hover:shadow-2xl hover:shadow-green-500/15',
+    hoverBorder: 'hover:border-green-500/40',
+  },
+  Vehicle: {
+    gradient: 'from-blue-950/80 via-sky-900/40 to-transparent',
+    badgeBg: 'bg-blue-500/25 backdrop-blur-md',
+    badgeBorder: 'border-blue-300/40',
+    badgeText: 'text-blue-200',
+    glowShadow: 'hover:shadow-2xl hover:shadow-blue-500/15',
+    hoverBorder: 'hover:border-blue-500/40',
+  },
+};
+
 export default function ServicesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
@@ -332,104 +398,121 @@ export default function ServicesPage() {
               exit={{ opacity: 0 }}
               className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5"
             >
-              {filteredServices.map((service, i) => (
-                <GlassCard
-                  key={service.id}
-                  level={2}
-                  glow
-                  custom={i}
-                  variants={serviceCardVariants}
-                  initial="hidden"
-                  animate="visible"
-                  interactive
-                  onClick={() => {
-                    setSelectedService(service);
-                    setIsDetailOpen(true);
-                  }}
-                  className="group flex flex-col h-full border border-white/40 dark:border-white/10 shadow-2xs hover:shadow-xs cursor-pointer relative overflow-hidden"
-                >
-                  {/* Service Image placeholder */}
-                  <div className="h-32 bg-muted/40 relative flex items-center justify-center border-b border-border/20 overflow-hidden shrink-0">
-                    <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-primary/5 group-hover:scale-105 transition-transform duration-500" />
-                    <div className="text-4xl select-none z-10">{service.icon}</div>
-                    
-                    {/* Category */}
-                    <div className="absolute top-2.5 left-2.5">
-                      <Badge variant="glass" size="xs">
-                        {service.category}
-                      </Badge>
-                    </div>
-
-                    {/* Rating */}
-                    <div className="absolute bottom-2.5 right-2.5 flex items-center gap-1 bg-white/70 dark:bg-zinc-950/70 backdrop-blur-md px-2 py-0.5 rounded-full border border-border/25">
-                      <Star size={9} className="text-amber-500 fill-amber-500" />
-                      <span className="text-[9.5px] font-bold text-foreground">4.8</span>
-                    </div>
-                  </div>
-
-                  {/* Body Content */}
-                  <div className="p-4 flex-1 flex flex-col justify-between space-y-4">
-                    <div className="space-y-1">
-                      <div className="flex justify-between items-start gap-2">
-                        <h3 className="text-xs font-bold text-foreground group-hover:text-primary transition-colors duration-200 truncate">
-                          {service.name}
-                        </h3>
-                        {service.name.includes('Deep') && (
-                          <span className="text-[8px] font-extrabold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded-md leading-none uppercase shrink-0 tracking-wider">
-                            Popular
-                          </span>
-                        )}
+              {filteredServices.map((service, i) => {
+                const theme = CATEGORY_THEMES[service.category] || CATEGORY_THEMES.Cleaning;
+                return (
+                  <GlassCard
+                    key={service.id}
+                    level={2}
+                    glow
+                    custom={i}
+                    variants={serviceCardVariants}
+                    initial="hidden"
+                    animate="visible"
+                    whileHover={{ y: -8, scale: 1.01, transition: { type: 'spring', stiffness: 400, damping: 25 } }}
+                    interactive
+                    onClick={() => {
+                      setSelectedService(service);
+                      setIsDetailOpen(true);
+                    }}
+                    className={cn(
+                      'group flex flex-col h-full border border-border/40 dark:border-white/10 shadow-xs cursor-pointer relative overflow-hidden transition-all duration-300',
+                      theme.glowShadow,
+                      theme.hoverBorder
+                    )}
+                  >
+                    {/* Service Image Banner with Category Color Lighting Overlay & Micro-Interactions */}
+                    <div className="h-44 relative flex items-center justify-center border-b border-border/20 overflow-hidden shrink-0 group">
+                      <img
+                        src={service.image}
+                        alt={service.name}
+                        className="w-full h-full object-cover group-hover:scale-110 group-hover:brightness-110 transition-transform duration-700 ease-out"
+                      />
+                      <div className={cn('absolute inset-0 bg-gradient-to-t', theme.gradient)} />
+                      
+                      {/* Category Themed Glass Badge */}
+                      <div className="absolute top-2.5 left-2.5 z-10">
+                        <span className={cn('text-[9.5px] font-bold px-2.5 py-1 rounded-full shadow-md border', theme.badgeBg, theme.badgeBorder, theme.badgeText)}>
+                          {service.category}
+                        </span>
                       </div>
-                      <p className="text-[10px] text-muted-foreground/80 line-clamp-2 leading-relaxed font-semibold">
-                        {service.description}
-                      </p>
-                      <p className="text-[9px] text-muted-foreground/60 font-semibold flex items-center gap-1">
-                        <Clock size={10} /> Est. Duration: 2 Hours
-                      </p>
+
+                      {/* Glass 3D Emoji Icon Badge */}
+                      <div className="absolute top-2.5 right-2.5 w-8 h-8 rounded-full bg-black/40 backdrop-blur-md border border-white/20 flex items-center justify-center text-sm shadow-lg z-10 group-hover:scale-110 group-hover:rotate-6 transition-transform duration-300">
+                        {service.icon}
+                      </div>
+
+                      {/* Rating Pill */}
+                      <div className="absolute bottom-2.5 right-2.5 flex items-center gap-1 bg-black/60 backdrop-blur-md px-2.5 py-0.5 rounded-full border border-white/20 text-white z-10">
+                        <Star size={10} className="text-amber-400 fill-amber-400 animate-pulse" />
+                        <span className="text-[10px] font-bold">4.8</span>
+                      </div>
                     </div>
 
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-baseline">
-                        <span className="text-[9px] font-medium text-muted-foreground/60">Starting price</span>
-                        <p className="text-xs font-bold text-foreground">
-                          {formatCurrency(service.basePrice)}
+                    {/* Body Content */}
+                    <div className="p-4 flex-1 flex flex-col justify-between space-y-4">
+                      <div className="space-y-1">
+                        <div className="flex justify-between items-start gap-2">
+                          <h3 className="text-xs font-bold text-foreground group-hover:text-primary transition-colors duration-200 truncate">
+                            {service.name}
+                          </h3>
+                          {service.name.includes('Deep') && (
+                            <span className="text-[8px] font-extrabold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded-md leading-none uppercase shrink-0 tracking-wider">
+                              Popular
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground/80 line-clamp-2 leading-relaxed font-semibold">
+                          {service.description}
+                        </p>
+                        <p className="text-[9px] text-muted-foreground/60 font-semibold flex items-center gap-1">
+                          <Clock size={10} /> Est. Duration: 2 Hours
                         </p>
                       </div>
 
-                      {/* Card CTAs */}
-                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border/20">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="xs"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedService(service);
-                            setIsAIModalOpen(true);
-                          }}
-                          className="rounded-xl font-bold text-[9px] h-7 gap-1 border-primary/20 text-primary hover:bg-primary/5"
-                        >
-                          <Sparkles size={10} className="animate-pulse text-primary" />
-                          Try AI Estimate
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="default"
-                          size="xs"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedService(service);
-                            setIsBookingOpen(true);
-                          }}
-                          className="rounded-xl font-bold text-[9px] h-7"
-                        >
-                          Book Now
-                        </Button>
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-baseline">
+                          <span className="text-[9px] font-medium text-muted-foreground/60">Starting price</span>
+                          <p className="text-xs font-bold text-foreground">
+                            {formatCurrency(service.basePrice)}
+                          </p>
+                        </div>
+
+                        {/* Card CTAs */}
+                        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border/20">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="xs"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedService(service);
+                              setIsAIModalOpen(true);
+                            }}
+                            className="rounded-xl font-bold text-[9px] h-7 gap-1 border-primary/20 text-primary hover:bg-primary/5"
+                          >
+                            <Sparkles size={10} className="animate-pulse text-primary" />
+                            Try AI Estimate
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="default"
+                            size="xs"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedService(service);
+                              setIsBookingOpen(true);
+                            }}
+                            className="rounded-xl font-bold text-[9px] h-7"
+                          >
+                            Book Now
+                          </Button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </GlassCard>
-              ))}
+                  </GlassCard>
+                );
+              })}
             </motion.div>
           ) : (
             <EmptyState
@@ -472,18 +555,29 @@ export default function ServicesPage() {
                 className="fixed top-0 right-0 h-full w-full max-w-md bg-card border-l border-border/50 shadow-2xl z-50 flex flex-col justify-between overflow-hidden"
               >
                 {/* Header Banner */}
-                <div className="relative h-44 bg-muted/40 flex items-center justify-center shrink-0 border-b border-border/20">
-                  <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-primary/5" />
-                  <div className="text-6xl select-none z-10">{selectedService.icon}</div>
+                <div className="relative h-48 bg-muted/40 flex items-center justify-center shrink-0 border-b border-border/20 overflow-hidden">
+                  <img
+                    src={selectedService.image}
+                    alt={selectedService.name}
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-black/20" />
+                  
+                  <div className="text-4xl select-none z-10 p-3 bg-white/20 backdrop-blur-md rounded-2xl border border-white/30 shadow-lg text-white">
+                    {selectedService.icon}
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => setIsDetailOpen(false)}
-                    className="absolute top-4 left-4 w-8 h-8 rounded-full bg-black/40 text-white flex items-center justify-center hover:bg-black/50 transition-colors z-20 cursor-pointer"
+                    className="absolute top-4 left-4 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 transition-colors z-20 cursor-pointer backdrop-blur-md border border-white/20"
                   >
                     <ArrowLeft size={16} />
                   </button>
-                  <div className="absolute top-4 right-4">
-                    <Badge variant="glass">{selectedService.category}</Badge>
+                  <div className="absolute top-4 right-4 z-10">
+                    <span className="bg-black/50 backdrop-blur-md text-white border border-white/20 text-xs font-bold px-3 py-1 rounded-full">
+                      {selectedService.category}
+                    </span>
                   </div>
                 </div>
 

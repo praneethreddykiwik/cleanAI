@@ -6,6 +6,7 @@ import { Bell, Check, Trash2, Calendar, CreditCard, Sparkles, ShieldAlert, Arrow
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useNotifications, NotificationItem } from '@/hooks/useNotifications';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import { dropdownVariants, backdropVariants } from '@/lib/animations';
 
@@ -18,11 +19,13 @@ interface NotificationDropdownProps {
 export function NotificationDropdown({ isOpen, onClose, role }: NotificationDropdownProps) {
   const router = useRouter();
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
 
-  // Fetch latest notifications scoped to dropdown limit = 5
+  // Fetch latest notifications scoped to dropdown limit = 5; only when auth is ready
   const { notifications, unreadCount, markAsRead, deleteNotification, markAllRead, isLoading } = useNotifications({
     status: 'ALL',
     limit: 5,
+    isAuthenticated: isAuthenticated && !authLoading,
   });
 
   // Handle ESC key to close

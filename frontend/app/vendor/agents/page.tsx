@@ -2,14 +2,11 @@
 
 import { motion } from 'framer-motion';
 import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Users,
   Search,
   Plus,
   Star,
-  Activity,
-  User,
-  ShieldAlert,
   Loader2,
   Trash2,
 } from 'lucide-react';
@@ -18,26 +15,15 @@ import { StatusBadge } from '@/components/shared/StatusBadge';
 import { Button } from '@/components/ui/button';
 import {
   containerVariants,
-  cardVariants,
   tableRowVariants,
 } from '@/lib/animations';
+import { apiCall } from '@/lib/api';
 import { toast } from 'sonner';
 
-// ==================
-// Mock Data
-// ==================
-const initialAgents = [
-  { id: '1', name: 'Ramesh Kumar', phone: '9988776655', email: 'ramesh@cleanpro.com', rating: 4.8, totalJobs: 142, status: 'AVAILABLE', skills: ['Deep Cleaning', 'Sofa Cleaning'] },
-  { id: '2', name: 'Suresh Singh', phone: '9876543210', email: 'suresh@cleanpro.com', rating: 4.7, totalJobs: 98, status: 'BUSY', skills: ['Kitchen Cleaning', 'AC Service'] },
-  { id: '3', name: 'Karan Johar', phone: '9012345678', email: 'karan@cleanpro.com', rating: 4.9, totalJobs: 76, status: 'AVAILABLE', skills: ['Bathroom Cleaning', 'Plumbing'] },
-  { id: '4', name: 'Vijay Mallya', phone: '9555666777', email: 'vijay@cleanpro.com', rating: 4.2, totalJobs: 18, status: 'OFFLINE', skills: ['Gardening'] },
-];
-
 export default function VendorAgentsPage() {
-  const [agents, setAgents] = useState(initialAgents);
+  const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Form State
   const [newAgentName, setNewAgentName] = useState('');
@@ -45,47 +31,72 @@ export default function VendorAgentsPage() {
   const [newAgentEmail, setNewAgentEmail] = useState('');
   const [newAgentSkill, setNewAgentSkill] = useState('Deep Cleaning');
 
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['vendor-agents'],
+    queryFn: async () => {
+      const res = await apiCall('/vendors/agents');
+      if (!res.success) throw new Error(res.message || 'Failed to load agents');
+      return res.data ?? [];
+    },
+  });
+
+  const agents: any[] = Array.isArray(data) 
+    ? data 
+    : (data && typeof data === 'object' && Array.isArray((data as any).data)) 
+      ? (data as any).data 
+      : [];
+
+  const addMutation = useMutation({
+    mutationFn: async (payload: { firstName: string; lastName: string; phone: string; email: string; skills: string[] }) => {
+      const res = await apiCall('/agents', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      if (!res.success) throw new Error(res.message || 'Failed to add agent');
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vendor-agents'] });
+      setShowAddModal(false);
+      setNewAgentName('');
+      setNewAgentPhone('');
+      setNewAgentEmail('');
+      toast.success('Agent registered. Verification pending.');
+    },
+    onError: (err: any) => toast.error(err.message || 'Failed to register agent.'),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async (agentId: string) => {
+      const res = await apiCall(`/agents/${agentId}`, { method: 'DELETE' });
+      if (!res.success) throw new Error(res.message || 'Failed to remove agent');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vendor-agents'] });
+      toast.success('Agent removed.');
+    },
+    onError: (err: any) => toast.error(err.message || 'Failed to remove agent.'),
+  });
+
   const handleAddAgent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAgentName || !newAgentPhone || !newAgentEmail) {
       toast.error('Please fill in all required agent details.');
       return;
     }
-
-    setIsSubmitting(true);
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    setIsSubmitting(false);
-
-    const newAgent = {
-      id: String(agents.length + 1),
-      name: newAgentName,
-      phone: newAgentPhone,
-      email: newAgentEmail,
-      rating: 5.0,
-      totalJobs: 0,
-      status: 'AVAILABLE' as const,
-      skills: [newAgentSkill],
-    };
-
-    setAgents([newAgent, ...agents]);
-    setShowAddModal(false);
-
-    // Reset Form
-    setNewAgentName('');
-    setNewAgentPhone('');
-    setNewAgentEmail('');
-    toast.success('Agent added successfully. Verification pending.');
+    const [firstName, ...rest] = newAgentName.trim().split(' ');
+    const lastName = rest.join(' ') || '';
+    addMutation.mutate({ firstName, lastName, phone: newAgentPhone, email: newAgentEmail, skills: [newAgentSkill] });
   };
 
-  const handleRemoveAgent = (id: string) => {
-    setAgents(agents.filter((a) => a.id !== id));
-    toast.error('Agent removed from platform list.');
-  };
-
-  const filteredAgents = agents.filter((agent) =>
-    agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    agent.skills.some((s) => s.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  const filteredAgents = agents.filter((agent) => {
+    const name = agent.user ? `${agent.user.firstName || ''} ${agent.user.lastName || ''}`.trim() : (agent.name || '');
+    const skills: string[] = agent.skills || [];
+    return (
+      name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      skills.some((s: string) => s.toLowerCase().includes(searchQuery.toLowerCase()))
+    );
+  });
 
   return (
     <DashboardLayout
@@ -124,83 +135,112 @@ export default function VendorAgentsPage() {
         </div>
 
         {/* Grid cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredAgents.map((agent, i) => (
-            <motion.div
-              key={agent.id}
-              custom={i}
-              variants={tableRowVariants}
-              className="bg-card border border-border/50 rounded-2xl p-5 space-y-4 hover:shadow-md transition-shadow relative"
-            >
-              {/* Card top */}
-              <div className="flex justify-between items-start">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">
-                    {agent.name.charAt(0)}
+        {isLoading ? (
+          <div className="flex items-center justify-center py-20 gap-2 text-muted-foreground text-sm">
+            <Loader2 size={16} className="animate-spin" /> Loading agents...
+          </div>
+        ) : isError ? (
+          <div className="flex items-center justify-center py-20 text-sm text-red-500">
+            Failed to load agents. Check your connection.
+          </div>
+        ) : filteredAgents.length === 0 ? (
+          <div className="flex items-center justify-center py-20 text-sm text-muted-foreground">
+            No agents found. Add your first agent to get started.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {filteredAgents.map((agent, i) => {
+              const name = agent.user
+                ? `${agent.user.firstName || ''} ${agent.user.lastName || ''}`.trim()
+                : (agent.name || 'Unknown');
+              const phone = agent.user?.phone || agent.phone || 'N/A';
+              const skills: string[] = agent.skills || [];
+              const rating = agent.rating ?? 0;
+              const totalJobs = agent._count?.bookings ?? agent.totalJobs ?? 0;
+              const status = agent.availability || agent.status || 'OFFLINE';
+              const agentId = agent.id?.substring(0, 8).toUpperCase() || '';
+
+              return (
+                <motion.div
+                  key={agent.id}
+                  custom={i}
+                  variants={tableRowVariants}
+                  className="bg-card border border-border/50 rounded-2xl p-5 space-y-4 hover:shadow-md transition-shadow relative"
+                >
+                  {/* Card top */}
+                  <div className="flex justify-between items-start">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">
+                        {name.charAt(0)}
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-foreground">{name}</h3>
+                        <p className="text-[10px] text-muted-foreground">{phone}</p>
+                      </div>
+                    </div>
+                    <StatusBadge status={status} size="sm" />
                   </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-foreground">{agent.name}</h3>
-                    <p className="text-[10px] text-muted-foreground">{agent.phone}</p>
+
+                  {/* Stats */}
+                  <div className="grid grid-cols-3 gap-2 border-y border-border/40 py-2.5 text-center">
+                    <div>
+                      <p className="text-[9px] text-muted-foreground">Rating</p>
+                      <p className="text-xs font-bold text-foreground flex items-center justify-center gap-0.5">
+                        <Star size={10} className="fill-amber-400 text-amber-400" />
+                        {Number(rating).toFixed(1)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-muted-foreground">Total Jobs</p>
+                      <p className="text-xs font-bold text-foreground">{totalJobs}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-muted-foreground">Status</p>
+                      <p className="text-xs font-bold text-foreground capitalize">{status.toLowerCase()}</p>
+                    </div>
                   </div>
-                </div>
-                <StatusBadge status={agent.status} size="sm" />
-              </div>
 
-              {/* Stats */}
-              <div className="grid grid-cols-3 gap-2 border-y border-border/40 py-2.5 text-center">
-                <div>
-                  <p className="text-[9px] text-muted-foreground">Rating</p>
-                  <p className="text-xs font-bold text-foreground flex items-center justify-center gap-0.5">
-                    <Star size={10} className="fill-amber-400 text-amber-400" />
-                    {agent.rating}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[9px] text-muted-foreground">Total Jobs</p>
-                  <p className="text-xs font-bold text-foreground">{agent.totalJobs}</p>
-                </div>
-                <div>
-                  <p className="text-[9px] text-muted-foreground">Compliance</p>
-                  <p className="text-xs font-bold text-foreground">98%</p>
-                </div>
-              </div>
+                  {/* Skills */}
+                  {skills.length > 0 && (
+                    <div className="space-y-1.5">
+                      <p className="text-[9px] text-muted-foreground font-semibold">Specialization</p>
+                      <div className="flex flex-wrap gap-1">
+                        {skills.map((skill: string) => (
+                          <span
+                            key={skill}
+                            className="text-[9px] bg-muted text-muted-foreground px-2 py-0.5 rounded-full font-semibold border border-border/50"
+                          >
+                            {skill}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
-              {/* Skills */}
-              <div className="space-y-1.5">
-                <p className="text-[9px] text-muted-foreground font-semibold">Specialization</p>
-                <div className="flex flex-wrap gap-1">
-                  {agent.skills.map((skill) => (
-                    <span
-                      key={skill}
-                      className="text-[9px] bg-muted text-muted-foreground px-2 py-0.5 rounded-full font-semibold border border-border/50"
-                    >
-                      {skill}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex justify-between items-center pt-2 border-t border-border/40">
-                <span className="text-[10px] text-muted-foreground">ID: AGT-0{agent.id}</span>
-                <div className="flex gap-1.5">
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => handleRemoveAgent(agent.id)}
-                    className="text-red-600 hover:bg-red-50 rounded-lg h-7 w-7 p-0"
-                    aria-label="Remove agent"
-                  >
-                    <Trash2 size={12} />
-                  </Button>
-                  <Button variant="outline" size="xs" className="h-7 text-[11px] rounded-lg">
-                    Configure
-                  </Button>
-                </div>
-              </div>
-            </motion.div>
-          ))}
-        </div>
+                  {/* Actions */}
+                  <div className="flex justify-between items-center pt-2 border-t border-border/40">
+                    <span className="text-[10px] text-muted-foreground">ID: AGT-{agentId}</span>
+                    <div className="flex gap-1.5">
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => removeMutation.mutate(agent.id)}
+                        disabled={removeMutation.isPending}
+                        className="text-red-600 hover:bg-red-50 rounded-lg h-7 w-7 p-0"
+                        aria-label="Remove agent"
+                      >
+                        {removeMutation.isPending ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                      </Button>
+                      <Button variant="outline" size="xs" className="h-7 text-[11px] rounded-lg">
+                        Configure
+                      </Button>
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Add Agent Modal Overlay */}
         {showAddModal && (
@@ -261,8 +301,15 @@ export default function VendorAgentsPage() {
                   >
                     <option value="Deep Cleaning">Deep Cleaning</option>
                     <option value="Kitchen Cleaning">Kitchen Cleaning</option>
-                    <option value="AC Service">AC Service</option>
+                    <option value="Bathroom Cleaning">Bathroom Cleaning</option>
+                    <option value="Sofa Cleaning">Sofa Cleaning</option>
+                    <option value="Electrical">Electrical</option>
                     <option value="Plumbing">Plumbing</option>
+                    <option value="AC Service">AC Service</option>
+                    <option value="Pest Control">Pest Control</option>
+                    <option value="Laundry">Laundry</option>
+                    <option value="Gardening">Gardening</option>
+                    <option value="Car Wash">Car Wash</option>
                   </select>
                 </div>
 
@@ -270,8 +317,8 @@ export default function VendorAgentsPage() {
                   <Button variant="outline" size="sm" type="button" onClick={() => setShowAddModal(false)}>
                     Cancel
                   </Button>
-                  <Button size="sm" type="submit" disabled={isSubmitting}>
-                    {isSubmitting ? <Loader2 size={12} className="animate-spin" /> : 'Register Agent'}
+                  <Button size="sm" type="submit" disabled={addMutation.isPending}>
+                    {addMutation.isPending ? <Loader2 size={12} className="animate-spin" /> : 'Register Agent'}
                   </Button>
                 </div>
               </form>

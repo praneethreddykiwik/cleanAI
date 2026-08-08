@@ -48,7 +48,7 @@ export function UserMenu({ className }: UserMenuProps) {
       label: 'Profile',
       icon: User,
       action: () => {
-        router.push(`/${user.role.toLowerCase()}/settings`);
+        router.push(`/${user.role.toLowerCase()}/profile`);
         setIsOpen(false);
       },
       shortcut: '⌘P',
@@ -73,7 +73,10 @@ export function UserMenu({ className }: UserMenuProps) {
     {
       label: 'Help & Support',
       icon: HelpCircle,
-      action: () => setIsOpen(false),
+      action: () => {
+        router.push(`/${user.role.toLowerCase()}/support`);
+        setIsOpen(false);
+      },
     },
   ];
 

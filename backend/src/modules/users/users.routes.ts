@@ -232,27 +232,184 @@ userRoutes.delete('/me/addresses/:id', authMiddleware as any, async (req: Authen
   }
 });
 
-// Mock/Simple Payments (for storing payment config on user profile)
+// Payment history — pulled from real Payment records linked to the customer
 userRoutes.get('/me/payments', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
-  res.status(200).json({
-    success: true,
-    data: [
-      { id: 'card-1', brand: 'Visa', last4: '4242', expiry: '12/28', isDefault: true }
-    ],
-  });
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const customer = await prisma.customer.findUnique({ where: { userId } });
+    if (!customer) return res.status(404).json({ success: false, message: 'Customer profile not found' });
+
+    const payments = await prisma.payment.findMany({
+      where: { booking: { customerId: customer.id } },
+      include: { booking: { select: { bookingNumber: true, totalAmount: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    res.status(200).json({ success: true, data: payments });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to fetch payment history' });
+  }
 });
 
-userRoutes.post('/me/payments', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
-  res.status(201).json({
-    success: true,
-    message: 'Payment method registered.',
-    data: { id: `card-${Math.random().toString(36).substring(7)}`, ...req.body },
-  });
+// Wallet balance
+userRoutes.get('/me/wallet', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    // Wallet is linked to Customer, not directly to User
+    const customer = await prisma.customer.findUnique({ where: { userId } });
+    if (!customer) return res.status(404).json({ success: false, message: 'Customer profile not found' });
+
+    let wallet = await prisma.wallet.findUnique({
+      where: { customerId: customer.id },
+      include: { transactions: { orderBy: { createdAt: 'desc' }, take: 20 } },
+    });
+
+    if (!wallet) {
+      // Auto-create wallet on first access
+      wallet = await prisma.wallet.create({
+        data: { customerId: customer.id, balance: 0 },
+        include: { transactions: true },
+      });
+    }
+
+    res.status(200).json({ success: true, data: wallet });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to fetch wallet' });
+  }
 });
 
-userRoutes.delete('/me/payments/:id', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
-  res.status(200).json({
-    success: true,
-    message: 'Payment method deleted.',
-  });
+// Preferences Endpoints
+userRoutes.get('/me/preferences', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const customer = await getOrCreateCustomer(userId);
+    if (!customer) return res.status(404).json({ success: false, message: 'Customer profile not found' });
+
+    const defaultPreferences = {
+      aiHistoryConsent: true,
+      smartRecommendations: true,
+      whatsappUpdates: true,
+      emailAlerts: true,
+      promoEmails: false,
+      twoFactorAuth: false,
+      currency: 'INR',
+    };
+
+    const currentPrefs = (customer.preferences && typeof customer.preferences === 'object')
+      ? { ...defaultPreferences, ...(customer.preferences as object) }
+      : defaultPreferences;
+
+    res.status(200).json({ success: true, data: currentPrefs });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to fetch preferences' });
+  }
+});
+
+userRoutes.patch('/me/preferences', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const customer = await getOrCreateCustomer(userId);
+    if (!customer) return res.status(404).json({ success: false, message: 'Customer profile not found' });
+
+    const newPreferences = req.body;
+    const updatedPreferences = {
+      ...((customer.preferences as object) || {}),
+      ...newPreferences,
+    };
+
+    const updatedCustomer = await prisma.customer.update({
+      where: { id: customer.id },
+      data: { preferences: updatedPreferences },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Preferences updated successfully.',
+      data: updatedCustomer.preferences,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to update preferences' });
+  }
+});
+
+// Change Password Endpoint
+userRoutes.post('/me/change-password', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Current and new password are required' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const bcrypt = await import('bcryptjs');
+    const isValid = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!isValid) {
+      return res.status(400).json({ success: false, message: 'Incorrect current password' });
+    }
+
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: newPasswordHash },
+    });
+
+    res.status(200).json({ success: true, message: 'Password updated successfully.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to change password' });
+  }
+});
+
+// Data Export Endpoint
+userRoutes.get('/me/export-data', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        customer: {
+          include: {
+            bookings: true,
+            addresses: true,
+            reviews: true,
+          },
+        },
+      },
+    });
+
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename=cleanai_archive_${userId}.json`);
+    res.status(200).json({
+      exportedAt: new Date().toISOString(),
+      user: {
+        id: user.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        createdAt: user.createdAt,
+      },
+      customerProfile: user.customer,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to export data' });
+  }
 });

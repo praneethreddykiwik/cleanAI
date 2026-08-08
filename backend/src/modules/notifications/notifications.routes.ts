@@ -119,6 +119,32 @@ notificationRoutes.get('/:id', authMiddleware as any, async (req: AuthenticatedR
   }
 });
 
+// Mark ALL notifications as read — must be registered BEFORE /:id/read to prevent Express ambiguity
+notificationRoutes.patch('/read-all', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    await prisma.notification.updateMany({
+      where: {
+        userId,
+        isRead: false,
+        deletedAt: null,
+      },
+      data: { isRead: true },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'All notifications marked as read.',
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to update all notifications' });
+  }
+});
+
 // Mark single notification as read
 notificationRoutes.patch('/:id/read', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -149,32 +175,6 @@ notificationRoutes.patch('/:id/read', authMiddleware as any, async (req: Authent
     });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message || 'Failed to update notification' });
-  }
-});
-
-// Mark all notifications for user as read
-notificationRoutes.patch('/read-all', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(401).json({ success: false, message: 'Unauthorized' });
-    }
-
-    await prisma.notification.updateMany({
-      where: {
-        userId,
-        isRead: false,
-        deletedAt: null,
-      },
-      data: { isRead: true },
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'All notifications marked as read.',
-    });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message || 'Failed to update all notifications' });
   }
 });
 

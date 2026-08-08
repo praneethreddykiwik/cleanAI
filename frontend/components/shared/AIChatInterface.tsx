@@ -529,70 +529,42 @@ export function AIChatInterface({
                   {msg.pricing && (
                     <div className="pt-3 border-t border-border/20 space-y-2">
                       <span className="text-[9px] uppercase font-semibold text-muted-foreground/60 block">Transparent Cost Breakdown</span>
-                      <div className="space-y-1 text-[11px] text-muted-foreground/80 font-semibold">
-                        <div className="flex justify-between">
-                          <span>Base Rate</span>
-                          <span>{formatCurrency(msg.pricing.basePrice)}</span>
+                      {msg.pricing.lineItems && msg.pricing.lineItems.length > 0 ? (
+                        <div className="space-y-2 text-[11px]">
+                          {msg.pricing.lineItems.map((item: any) => (
+                            <div key={item.key} className="flex justify-between items-start gap-2">
+                              <div className="min-w-0">
+                                <span className="font-semibold text-foreground block">{item.label}</span>
+                                <span className="text-[9.5px] text-muted-foreground/70 block leading-tight">{item.explanation}</span>
+                              </div>
+                              <span className="font-bold text-foreground shrink-0">
+                                {item.amount === 0 ? <span className="text-emerald-500 font-bold">₹0 (Free)</span> : formatCurrency(item.amount)}
+                              </span>
+                            </div>
+                          ))}
+                          <div className="flex justify-between border-t border-border/20 pt-2 font-bold text-foreground text-xs">
+                            <span>Estimated Range</span>
+                            <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                              {formatCurrency(msg.pricing.totalMin)} – {formatCurrency(msg.pricing.totalMax)}
+                            </span>
+                          </div>
                         </div>
-                        {msg.pricing.cityMultiplier !== 1 && (
-                          <div className="flex justify-between text-muted-foreground/90">
-                            <span>City Premium</span>
-                            <span>x{msg.pricing.cityMultiplier}</span>
+                      ) : (
+                        <div className="space-y-1 text-[11px] text-muted-foreground/80 font-semibold">
+                          <div className="flex justify-between">
+                            <span>Base Rate</span>
+                            <span>{formatCurrency(msg.pricing.basePrice)}</span>
                           </div>
-                        )}
-                        {msg.pricing.demandMultiplier !== 1 && (
-                          <div className="flex justify-between text-amber-600 dark:text-amber-400">
-                            <span>Demand Surge</span>
-                            <span>x{msg.pricing.demandMultiplier}</span>
+                          <div className="flex justify-between">
+                            <span>Travel Allocation</span>
+                            <span>{formatCurrency(msg.pricing.travelFee || 0)}</span>
                           </div>
-                        )}
-                        {msg.pricing.areaMultiplier !== 1 && (
-                          <div className="flex justify-between text-muted-foreground/90">
-                            <span>Area Multiplier</span>
-                            <span>x{msg.pricing.areaMultiplier}</span>
+                          <div className="flex justify-between font-bold text-foreground border-t border-border/20 pt-1">
+                            <span>Estimated Range</span>
+                            <span>{formatCurrency(msg.pricing.totalMin)} – {formatCurrency(msg.pricing.totalMax)}</span>
                           </div>
-                        )}
-                        {msg.pricing.severityFee !== 0 && (
-                          <div className={cn("flex justify-between", msg.pricing.severityFee < 0 ? "text-green-600 dark:text-green-400" : "text-red-500")}>
-                            <span>Severity Adj.</span>
-                            <span>{msg.pricing.severityFee < 0 ? '-' : '+'}{formatCurrency(Math.abs(msg.pricing.severityFee))}</span>
-                          </div>
-                        )}
-                        {msg.pricing.weekendSurcharge > 0 && (
-                          <div className="flex justify-between text-muted-foreground/90">
-                            <span>Weekend Surcharge</span>
-                            <span>{formatCurrency(msg.pricing.weekendSurcharge)}</span>
-                          </div>
-                        )}
-                        {msg.pricing.nightCharge > 0 && (
-                          <div className="flex justify-between text-amber-500 font-medium">
-                            <span>Night Surcharge</span>
-                            <span>{formatCurrency(msg.pricing.nightCharge)}</span>
-                          </div>
-                        )}
-                        {msg.pricing.holidayCharge > 0 && (
-                          <div className="flex justify-between text-indigo-500 font-medium">
-                            <span>Holiday Surcharge</span>
-                            <span>{formatCurrency(msg.pricing.holidayCharge)}</span>
-                          </div>
-                        )}
-                        <div className="flex justify-between text-muted-foreground/90">
-                          <span>Travel Allocation</span>
-                          <span>{formatCurrency(msg.pricing.travelFee || 75)}</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span>Platform Fee</span>
-                          <span>{formatCurrency(msg.pricing.platformFee)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>GST (18%)</span>
-                          <span>{formatCurrency(msg.pricing.taxes)}</span>
-                        </div>
-                        <div className="flex justify-between border-t border-border/20 pt-1.5 font-bold text-foreground">
-                          <span>Estimated Range</span>
-                          <span>{formatCurrency(msg.pricing.totalMin)} – {formatCurrency(msg.pricing.totalMax)}</span>
-                        </div>
-                      </div>
+                      )}
                     </div>
                   )}
                 </motion.div>

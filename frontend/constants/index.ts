@@ -45,148 +45,214 @@ export const ROUTES = {
 } as const;
 
 export const SERVICES_DATA = [
+  // 1. Home Cleaning
   {
     id: '1',
     name: 'Kitchen Cleaning',
     slug: 'kitchen-cleaning',
-    category: 'Cleaning',
+    category: 'Home Cleaning',
     icon: '🍳',
     basePrice: 499,
-    description:
-      'Professional deep cleaning for your kitchen, including appliances, countertops, and cabinets.',
-    image: '/images/services/kitchen-cleaning.jpg',
+    description: 'Deep degreasing, chimney scrub, countertop sanitization, and cabinet polishing.',
+    image: 'https://images.unsplash.com/photo-1556911220-e15b29be8c8f?auto=format&fit=crop&w=800&q=80',
     isActive: true,
   },
   {
     id: '2',
     name: 'Bathroom Cleaning',
     slug: 'bathroom-cleaning',
-    category: 'Cleaning',
+    category: 'Home Cleaning',
     icon: '🚿',
     basePrice: 299,
-    description:
-      'Thorough sanitization and cleaning of bathrooms, tiles, and fixtures.',
-    image: '/images/services/bathroom-cleaning.jpg',
+    description: 'Acidic tile scrub, hardwater stain removal, glass shower enclosure sanitization.',
+    image: 'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=800&q=80',
     isActive: true,
   },
   {
     id: '3',
-    name: 'Deep Cleaning',
+    name: 'Deep Home Cleaning',
     slug: 'deep-cleaning',
-    category: 'Cleaning',
+    category: 'Home Cleaning',
     icon: '✨',
     basePrice: 1499,
-    description:
-      'Complete home deep cleaning service covering every corner of your space.',
-    image: '/images/services/deep-cleaning.jpg',
+    description: '360° intensive home deep clean covering all rooms, windows, floors, and cobwebs.',
+    image: 'https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&w=800&q=80',
+    isActive: true,
+  },
+
+  // 2. Pre-Ceremony & Event Cleaning
+  {
+    id: '13',
+    name: 'Griha Pravesh & Wedding Cleaning',
+    slug: 'pre-ceremony-cleaning',
+    category: 'Pre-Ceremony & Events',
+    icon: '🎉',
+    basePrice: 1999,
+    description: 'Specialized pre-event deep clean, sticker/paint removal, marble shine & kitchen setup.',
+    image: 'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&q=80',
     isActive: true,
   },
   {
-    id: '4',
-    name: 'Painting',
-    slug: 'painting',
-    category: 'Home Improvement',
-    icon: '🎨',
-    basePrice: 2999,
-    description:
-      'Professional interior and exterior painting services for your home.',
-    image: '/images/services/painting.jpg',
+    id: '14',
+    name: 'Post-Renovation Debris Clean',
+    slug: 'post-renovation-cleaning',
+    category: 'Pre-Ceremony & Events',
+    icon: '🏗️',
+    basePrice: 2499,
+    description: 'Cement dust extraction, paint splash removal, glue/adhesive cleaning, glass polish.',
+    image: 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=800&q=80',
     isActive: true,
   },
+
+  // 3. Vehicle Care
+  {
+    id: '11',
+    name: 'Premium Bike & Car Wash',
+    slug: 'car-wash',
+    category: 'Vehicle Care',
+    icon: '🚗',
+    basePrice: 399,
+    description: 'Doorstep foam wash, ceramic spray coating, chain degreasing, and engine bay wash.',
+    image: 'https://images.unsplash.com/photo-1520340356584-f9917d1eea6f?auto=format&fit=crop&w=800&q=80',
+    isActive: true,
+  },
+
+  // 4. Repairs & Electrical
   {
     id: '5',
-    name: 'Electrical',
+    name: 'Electrical Repairs',
     slug: 'electrical',
-    category: 'Repair',
+    category: 'Repairs & Electrical',
     icon: '⚡',
     basePrice: 399,
-    description:
-      'Expert electricians for repairs, installations, and safety inspections.',
-    image: '/images/services/electrical.jpg',
+    description: 'Certified electricians for wiring, MCB fixes, switch replacement, and appliance setups.',
+    image: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&w=800&q=80',
     isActive: true,
   },
   {
     id: '6',
-    name: 'Plumbing',
+    name: 'Plumbing Services',
     slug: 'plumbing',
-    category: 'Repair',
+    category: 'Repairs & Electrical',
     icon: '🔧',
     basePrice: 349,
-    description:
-      'Fix leaks, blockages, and plumbing installations by certified plumbers.',
-    image: '/images/services/plumbing.jpg',
+    description: 'Leak detection, blockage clearing, pipe fitting, and sanitaryware installations.',
+    image: 'https://images.unsplash.com/photo-1585704032915-c3400ca199e7?auto=format&fit=crop&w=800&q=80',
     isActive: true,
   },
   {
     id: '7',
-    name: 'AC Service',
+    name: 'AC Service & Repair',
     slug: 'ac-service',
-    category: 'Appliance',
+    category: 'Repairs & Electrical',
     icon: '❄️',
     basePrice: 599,
-    description:
-      'AC servicing, deep cleaning, gas refill, and repair services.',
-    image: '/images/services/ac-service.jpg',
+    description: 'Foam jet AC servicing, gas leak filling, installation, and PCB diagnostics.',
+    image: 'https://images.unsplash.com/photo-1621905252507-b35492cc74b4?auto=format&fit=crop&w=800&q=80',
     isActive: true,
   },
+
+  // 5. Home Improvement
   {
-    id: '8',
-    name: 'Pest Control',
-    slug: 'pest-control',
-    category: 'Home Care',
-    icon: '🐛',
-    basePrice: 799,
-    description:
-      'Professional pest control treatments for cockroaches, ants, rodents, and more.',
-    image: '/images/services/pest-control.jpg',
+    id: '4',
+    name: 'Interior & Exterior Painting',
+    slug: 'painting',
+    category: 'Home Improvement',
+    icon: '🎨',
+    basePrice: 2999,
+    description: 'Wall texture, crack filling, moisture proofing, and premium acrylic painting.',
+    image: 'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80',
     isActive: true,
   },
-  {
-    id: '9',
-    name: 'Laundry',
-    slug: 'laundry',
-    category: 'Home Care',
-    icon: '👕',
-    basePrice: 249,
-    description:
-      'Wash, dry, fold, and iron services for all your clothing and linens.',
-    image: '/images/services/laundry.jpg',
-    isActive: true,
-  },
+
+  // 6. Outdoor & Garden
   {
     id: '10',
-    name: 'Gardening',
+    name: 'Gardening & Lawn Care',
     slug: 'gardening',
-    category: 'Outdoor',
+    category: 'Outdoor & Garden',
     icon: '🌿',
     basePrice: 599,
-    description:
-      'Garden maintenance, pruning, planting, and lawn care services.',
-    image: '/images/services/gardening.jpg',
+    description: 'Lawn trimming, plant pruning, pressure washing driveways, and terrace garden setups.',
+    image: 'https://images.unsplash.com/photo-1416879595882-3373a0480b5b?auto=format&fit=crop&w=800&q=80',
     isActive: true,
   },
+
+  // 7. Pest Control
   {
-    id: '11',
-    name: 'Car Wash',
-    slug: 'car-wash',
-    category: 'Vehicle',
-    icon: '🚗',
-    basePrice: 399,
-    description:
-      'Doorstep car washing, interior cleaning, and detailing services.',
-    image: '/images/services/car-wash.jpg',
+    id: '8',
+    name: 'Herbal Pest Control',
+    slug: 'pest-control',
+    category: 'Pest Control',
+    icon: '🐛',
+    basePrice: 799,
+    description: 'Odorless cockroach gel treatment, termite drill-fill-seal, and rodent proofing.',
+    image: 'https://images.unsplash.com/photo-1563453392212-326f5e854473?auto=format&fit=crop&w=800&q=80',
     isActive: true,
   },
+
+  // 8. Furniture Care
   {
     id: '12',
-    name: 'Sofa Cleaning',
+    name: 'Sofa & Furniture Polish',
     slug: 'sofa-cleaning',
-    category: 'Cleaning',
+    category: 'Furniture Care',
     icon: '🛋️',
     basePrice: 699,
-    description:
-      'Professional sofa and upholstery cleaning to remove stains and odors.',
-    image: '/images/services/sofa-cleaning.jpg',
+    description: 'Injection-extraction sofa shampooing, recliner conditioning, and wood polishing.',
+    image: 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=800&q=80',
+    isActive: true,
+  },
+
+  // 9. Water & Sanitation
+  {
+    id: '15',
+    name: 'Water Tank & Sump Clean',
+    slug: 'water-tank-cleaning',
+    category: 'Water & Sanitation',
+    icon: '💧',
+    basePrice: 899,
+    description: 'High-pressure sludge extraction, UV sanitization, and antibacterial tank treatment.',
+    image: 'https://images.unsplash.com/photo-1542013936693-884638332954?auto=format&fit=crop&w=800&q=80',
+    isActive: true,
+  },
+
+  // 10. Commercial Services
+  {
+    id: '16',
+    name: 'Office & Facility Cleaning',
+    slug: 'office-cleaning',
+    category: 'Commercial Services',
+    icon: '🏢',
+    basePrice: 2999,
+    description: 'Commercial workstation sanitization, floor scrubbing, glass facade cleaning.',
+    image: 'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=800&q=80',
+    isActive: true,
+  },
+
+  // 11. Moving Services
+  {
+    id: '17',
+    name: 'Move-In / Move-Out Clean',
+    slug: 'moving-cleaning',
+    category: 'Moving Services',
+    icon: '📦',
+    basePrice: 1799,
+    description: 'Complete handover cleaning for tenants/landlords, sticker removal, and sanitization.',
+    image: 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=800&q=80',
+    isActive: true,
+  },
+
+  // 12. Seasonal Services
+  {
+    id: '18',
+    name: 'Festival & Seasonal Deep Clean',
+    slug: 'seasonal-cleaning',
+    category: 'Seasonal Services',
+    icon: '❄️',
+    basePrice: 1299,
+    description: 'Monsoon mold control, Diwali deep house refresh, and festival preparation cleaning.',
+    image: 'https://images.unsplash.com/photo-1513151233558-d860c5398176?auto=format&fit=crop&w=800&q=80',
     isActive: true,
   },
 ] as const;

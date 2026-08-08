@@ -2,14 +2,12 @@
 
 import { motion } from 'framer-motion';
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
-  Calendar,
-  Clock,
   Search,
   Download,
-  Filter,
   Eye,
-  MapPin,
+  Loader2,
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layouts/DashboardLayout';
 import { StatusBadge } from '@/components/shared/StatusBadge';
@@ -21,33 +19,73 @@ import {
   tableRowVariants,
 } from '@/lib/animations';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { apiCall } from '@/lib/api';
 import { toast } from 'sonner';
 
 // ==================
-// Mock Data
+// CSV Export Helper
 // ==================
-const initialBookings = [
-  { id: '1', number: 'CAI-A1B2', service: 'Deep Cleaning', customer: 'Priya Sharma', vendor: 'CleanPro', amount: 1499, status: 'COMPLETED', date: new Date(Date.now() - 86400000).toISOString(), address: 'Sector 4, HSR Layout, Bengaluru' },
-  { id: '2', number: 'CAI-C3D4', service: 'Electrical Repair', customer: 'Rahul Gupta', vendor: 'QuickFix', amount: 399, status: 'IN_PROGRESS', date: new Date().toISOString(), address: 'Flat 101, Indiranagar, Bengaluru' },
-  { id: '3', number: 'CAI-E5F6', service: 'Pest Control', customer: 'Ananya Iyer', vendor: 'PestAway', amount: 799, status: 'PENDING', date: new Date(Date.now() + 86400000).toISOString(), address: 'G-02, Koramangala, Bengaluru' },
-  { id: '4', number: 'CAI-G7H8', service: 'AC Service', customer: 'Vikram Nair', vendor: 'CoolBreeze', amount: 599, status: 'CANCELLED', date: new Date(Date.now() - 2 * 86400000).toISOString(), address: 'Block C, Whitefield, Bengaluru' },
-];
+function buildBookingCSV(bookings: any[]): string {
+  const headers = ['Booking #', 'Service', 'Customer', 'Vendor', 'Amount', 'Status', 'Payment', 'Date'];
+  const rows = bookings.map((b) => [
+    b.bookingNumber || b.id || '',
+    b.service?.name || b.service || '',
+    `${b.customer?.user?.firstName || ''} ${b.customer?.user?.lastName || ''}`.trim() || b.customer || '',
+    b.vendor?.businessName || b.vendor || '',
+    String(b.totalAmount ?? b.amount ?? ''),
+    b.status || '',
+    b.paymentMethod || '',
+    b.scheduledAt || b.createdAt || b.date || '',
+  ]);
+  return [headers, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+}
 
 export default function AdminBookingsPage() {
-  const [bookings] = useState(initialBookings);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'>('ALL');
+  const [isExporting, setIsExporting] = useState(false);
 
-  const handleExport = () => {
-    toast.success('Bookings sheet exported successfully to CSV.');
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['admin-bookings'],
+    queryFn: async () => {
+      const res = await apiCall('/bookings');
+      if (!res.success) throw new Error(res.message || 'Failed to load bookings');
+      return res.data ?? [];
+    },
+  });
+
+  const bookings: any[] = data ?? [];
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const csv = buildBookingCSV(bookings);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `cleanai_bookings_${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Bookings exported to CSV.');
+    } catch {
+      toast.error('Export failed.');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const filteredBookings = bookings.filter((b) => {
+    const service = b.service?.name || b.service || '';
+    const customer = `${b.customer?.user?.firstName || ''} ${b.customer?.user?.lastName || ''}`.trim() || b.customer || '';
+    const vendor = b.vendor?.businessName || b.vendor || '';
+    const number = b.bookingNumber || b.id || '';
+
     const matchesSearch =
-      b.service.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      b.customer.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      b.vendor.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      b.number.toLowerCase().includes(searchQuery.toLowerCase());
+      service.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      customer.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      vendor.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      number.toLowerCase().includes(searchQuery.toLowerCase());
 
     if (statusFilter === 'ALL') return matchesSearch;
     return b.status === statusFilter && matchesSearch;
@@ -72,8 +110,9 @@ export default function AdminBookingsPage() {
               Monitor customer order bookings status and dispatch values.
             </p>
           </div>
-          <Button size="sm" onClick={handleExport} className="gap-1.5 rounded-xl shadow-sm self-start sm:self-auto">
-            <Download size={14} /> Export Sheet
+          <Button size="sm" onClick={handleExport} disabled={isExporting} className="gap-1.5 rounded-xl shadow-sm self-start sm:self-auto">
+            {isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            Export Sheet
           </Button>
         </div>
 
@@ -112,66 +151,89 @@ export default function AdminBookingsPage() {
           variants={cardVariants}
           className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm"
         >
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border bg-muted/30">
-                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                    Booking #
-                  </th>
-                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                    Details
-                  </th>
-                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                    Amount
-                  </th>
-                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                    Date
-                  </th>
-                  <th className="px-5 py-3 text-right" />
-                </tr>
-              </thead>
-              <tbody>
-                {filteredBookings.map((booking, idx) => (
-                  <motion.tr
-                    key={booking.id}
-                    custom={idx}
-                    variants={tableRowVariants}
-                    className="border-b border-border/50 hover:bg-accent/30 transition-colors"
-                  >
-                    <td className="px-5 py-3">
-                      <span className="text-xs font-mono font-bold text-muted-foreground">{booking.number}</span>
-                    </td>
-                    <td className="px-5 py-3">
-                      <div>
-                        <p className="text-xs font-bold text-foreground">{booking.service}</p>
-                        <p className="text-[10px] text-muted-foreground">
-                          Cust: {booking.customer} · Vend: {booking.vendor}
-                        </p>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className="text-xs font-bold text-foreground">{formatCurrency(booking.amount)}</span>
-                    </td>
-                    <td className="px-5 py-3">
-                      <StatusBadge status={booking.status} size="sm" />
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className="text-xs text-muted-foreground">{formatDate(booking.date)}</span>
-                    </td>
-                    <td className="px-5 py-3 text-right">
-                      <Button variant="ghost" size="xs" className="gap-1 rounded-lg">
-                        <Eye size={12} /> View
-                      </Button>
-                    </td>
-                  </motion.tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-20 gap-2 text-muted-foreground text-sm">
+              <Loader2 size={16} className="animate-spin" /> Loading bookings...
+            </div>
+          ) : isError ? (
+            <div className="flex items-center justify-center py-20 text-sm text-red-500">
+              Failed to load bookings. Check your connection.
+            </div>
+          ) : filteredBookings.length === 0 ? (
+            <div className="flex items-center justify-center py-20 text-sm text-muted-foreground">
+              No bookings found.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-border bg-muted/30">
+                    <th className="px-5 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      Booking #
+                    </th>
+                    <th className="px-5 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      Details
+                    </th>
+                    <th className="px-5 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      Amount
+                    </th>
+                    <th className="px-5 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-5 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      Date
+                    </th>
+                    <th className="px-5 py-3 text-right" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredBookings.map((booking, idx) => {
+                    const serviceName = booking.service?.name || booking.service || 'N/A';
+                    const customerName = `${booking.customer?.user?.firstName || ''} ${booking.customer?.user?.lastName || ''}`.trim() || booking.customer || 'N/A';
+                    const vendorName = booking.vendor?.businessName || booking.vendor || 'N/A';
+                    const bookingNum = booking.bookingNumber || booking.id?.substring(0, 8).toUpperCase() || '';
+                    const amount = booking.totalAmount ?? booking.amount ?? 0;
+                    const date = booking.scheduledAt || booking.createdAt || booking.date || '';
+
+                    return (
+                      <motion.tr
+                        key={booking.id}
+                        custom={idx}
+                        variants={tableRowVariants}
+                        className="border-b border-border/50 hover:bg-accent/30 transition-colors"
+                      >
+                        <td className="px-5 py-3">
+                          <span className="text-xs font-mono font-bold text-muted-foreground">{bookingNum}</span>
+                        </td>
+                        <td className="px-5 py-3">
+                          <div>
+                            <p className="text-xs font-bold text-foreground">{serviceName}</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              Cust: {customerName} · Vend: {vendorName}
+                            </p>
+                          </div>
+                        </td>
+                        <td className="px-5 py-3">
+                          <span className="text-xs font-bold text-foreground">{formatCurrency(amount)}</span>
+                        </td>
+                        <td className="px-5 py-3">
+                          <StatusBadge status={booking.status} size="sm" />
+                        </td>
+                        <td className="px-5 py-3">
+                          <span className="text-xs text-muted-foreground">{date ? formatDate(date) : 'N/A'}</span>
+                        </td>
+                        <td className="px-5 py-3 text-right">
+                          <Button variant="ghost" size="xs" className="gap-1 rounded-lg">
+                            <Eye size={12} /> View
+                          </Button>
+                        </td>
+                      </motion.tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </motion.div>
 
         {/* Pagination */}

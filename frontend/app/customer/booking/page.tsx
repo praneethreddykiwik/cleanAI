@@ -26,6 +26,7 @@ import { containerVariants, cardVariants } from '@/lib/animations';
 import { toast } from 'sonner';
 import { useQuery } from '@tanstack/react-query';
 import { apiCall } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
 import { GoogleMapProvider } from '@/components/shared/GoogleMapProvider';
 import { AddressAutocomplete } from '@/components/shared/AddressAutocomplete';
 import { LocationPicker } from '@/components/shared/LocationPicker';
@@ -58,6 +59,7 @@ const PRESET_ADDRESSES = [
 function BookingPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
   const serviceName = searchParams.get('service') || 'Deep Cleaning';
   const basePrice = parseInt(searchParams.get('price') || '1499');
 
@@ -85,22 +87,28 @@ function BookingPageInner() {
     country?: string;
   } | null>(null);
 
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<'upi' | 'card' | 'cod'>('upi');
   const [isBookingComplete, setIsBookingComplete] = useState(false);
   const [bookingNumber, setBookingNumber] = useState('');
   const [isAIBooking, setIsAIBooking] = useState(false);
 
-  // Fetch customer addresses
+  // Fetch customer addresses — only after auth is confirmed
   const { data: addressesData, refetch: refetchAddresses, isLoading: isAddressesLoading } = useQuery({
     queryKey: ['customer-addresses'],
     queryFn: () => apiCall('/users/me/addresses'),
+    enabled: isAuthenticated && !authLoading,
+    retry: 1,
   });
   const addresses = addressesData?.data || [];
   const selectedAddress = selectedAddressState || (addresses.find((a: any) => a.isDefault) || addresses[0])?.id || '';
 
-  // Fetch active services
+  // Fetch active services — public endpoint, but wait for auth hydration first
   const { data: servicesData } = useQuery({
     queryKey: ['services'],
     queryFn: () => apiCall('/services'),
+    enabled: !authLoading,
+    retry: 1,
+    staleTime: 5 * 60 * 1000, // Services rarely change — cache 5 min
   });
   const services = servicesData?.data || [];
 
@@ -214,6 +222,7 @@ function BookingPageInner() {
           scheduledTime: selectedTime,
           notes: 'Google Maps location-pinned booking',
           totalAmount: basePrice + 99,
+          paymentMethod: selectedPaymentMethod.toUpperCase(), // UPI | CARD | COD
           latitude: addr.latitude,
           longitude: addr.longitude,
           placeId: addr.placeId || '',
@@ -622,18 +631,23 @@ function BookingPageInner() {
 
                       <div className="space-y-3">
                         {[
-                          { id: 'upi', label: 'UPI (GPay / PhonePe / Paytm)', icon: '📱', desc: 'Instant, secure checkout' },
-                          { id: 'card', label: 'Credit or Debit Card', icon: '💳', desc: 'Visa, MasterCard, RuPay' },
-                          { id: 'cod', label: 'Cash on Service Completion', icon: '💵', desc: 'Pay directly after completion' },
+                          { id: 'upi' as const, label: 'UPI (GPay / PhonePe / Paytm)', icon: '📱', desc: 'Instant, secure checkout' },
+                          { id: 'card' as const, label: 'Credit or Debit Card', icon: '💳', desc: 'Visa, MasterCard, RuPay' },
+                          { id: 'cod' as const, label: 'Cash on Service Completion', icon: '💵', desc: 'Pay directly after completion' },
                         ].map((mode) => (
                           <label
                             key={mode.id}
-                            className="flex items-center gap-3 p-3.5 border border-border/50 rounded-xl bg-background hover:bg-muted/30 cursor-pointer transition-colors"
+                            className={`flex items-center gap-3 p-3.5 border rounded-xl bg-background hover:bg-muted/30 cursor-pointer transition-colors ${
+                              selectedPaymentMethod === mode.id
+                                ? 'border-primary ring-1 ring-primary/20'
+                                : 'border-border/50'
+                            }`}
                           >
                             <input
                               type="radio"
                               name="paymentMode"
-                              defaultChecked={mode.id === 'upi'}
+                              checked={selectedPaymentMethod === mode.id}
+                              onChange={() => setSelectedPaymentMethod(mode.id)}
                               className="w-4 h-4 text-primary focus:ring-primary/20 accent-primary"
                             />
                             <span className="text-xl shrink-0">{mode.icon}</span>

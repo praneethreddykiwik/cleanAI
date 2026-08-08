@@ -340,3 +340,45 @@ adminRoutes.get('/users', authMiddleware as any, authorizeRoles('ADMIN') as any,
     res.status(500).json({ success: false, message: error.message || 'Failed to fetch users list' });
   }
 });
+
+// List support tickets for admin queue
+adminRoutes.get('/support-tickets', authMiddleware as any, authorizeRoles('ADMIN') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tickets = await prisma.supportTicket.findMany({
+      include: {
+        customer: { include: { user: true } },
+        booking: { select: { bookingNumber: true, id: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const mapped = tickets.map((t) => ({
+      id: t.id,
+      userEmail: t.customer.user.email,
+      userName: `${t.customer.user.firstName} ${t.customer.user.lastName}`,
+      issue: t.issueDescription,
+      status: t.status,
+      bookingRef: t.booking?.bookingNumber || null,
+      aiAnalysis: t.aiAnalysis,
+      createdAt: t.createdAt,
+    }));
+
+    res.status(200).json({ success: true, data: mapped });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to fetch support tickets' });
+  }
+});
+
+// Mark support ticket as resolved
+adminRoutes.patch('/support-tickets/:id/resolve', authMiddleware as any, authorizeRoles('ADMIN') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const ticket = await prisma.supportTicket.update({
+      where: { id },
+      data: { status: 'RESOLVED' },
+    });
+    res.status(200).json({ success: true, message: 'Ticket resolved.', data: ticket });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to resolve ticket' });
+  }
+});

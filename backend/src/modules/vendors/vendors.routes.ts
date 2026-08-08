@@ -361,3 +361,117 @@ vendorRoutes.get('/dashboard-summary', authMiddleware as any, authorizeRoles('VE
     res.status(500).json({ success: false, message: error.message || 'Failed to aggregate vendor dashboard summary' });
   }
 });
+
+// GET /vendors/analytics — real month-by-month revenue + service breakdown
+vendorRoutes.get('/analytics', authMiddleware as any, authorizeRoles('VENDOR') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const vendor = await prisma.vendor.findUnique({ where: { userId } });
+    if (!vendor) return res.status(404).json({ success: false, message: 'Vendor profile not found' });
+
+    // Total earnings (all time)
+    const totalEarningsAgg = await prisma.booking.aggregate({
+      where: { vendorId: vendor.id, paymentStatus: 'PAID' },
+      _sum: { vendorAmount: true },
+    });
+    const totalEarnings = totalEarningsAgg._sum.vendorAmount || 0;
+
+    // Completed jobs
+    const completedJobs = await prisma.booking.count({
+      where: { vendorId: vendor.id, status: 'COMPLETED' },
+    });
+
+    // Average ticket size
+    const avgAgg = await prisma.booking.aggregate({
+      where: { vendorId: vendor.id, status: 'COMPLETED' },
+      _avg: { totalAmount: true },
+    });
+    const avgTicket = avgAgg._avg.totalAmount || 0;
+
+    // Rating
+    const rating = vendor.rating || 0;
+
+    // Month-over-month revenue (last 6 months)
+    const now = new Date();
+    const monthlyRevenue: { month: string; val: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const start = new Date(d.getFullYear(), d.getMonth(), 1);
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+      const agg = await prisma.booking.aggregate({
+        where: {
+          vendorId: vendor.id,
+          paymentStatus: 'PAID',
+          createdAt: { gte: start, lte: end },
+        },
+        _sum: { vendorAmount: true },
+      });
+      monthlyRevenue.push({
+        month: d.toLocaleString('default', { month: 'short' }),
+        val: Math.round((agg._sum.vendorAmount || 0) / 1000), // in k
+      });
+    }
+
+    // Service breakdown (top services by job count)
+    const serviceBookings = await prisma.booking.groupBy({
+      by: ['serviceId'],
+      where: { vendorId: vendor.id, status: 'COMPLETED' },
+      _count: { id: true },
+      orderBy: { _count: { id: 'desc' } },
+      take: 4,
+    });
+
+    const serviceIds = serviceBookings.map((s) => s.serviceId);
+    const services = await prisma.service.findMany({
+      where: { id: { in: serviceIds } },
+      select: { id: true, name: true },
+    });
+    const totalJobsForBreakdown = serviceBookings.reduce((acc, s) => acc + s._count.id, 0) || 1;
+    const serviceBreakdown = serviceBookings.map((s) => {
+      const svc = services.find((sv) => sv.id === s.serviceId);
+      return {
+        name: svc?.name || 'Unknown',
+        count: s._count.id,
+        percentage: Math.round((s._count.id / totalJobsForBreakdown) * 100),
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalEarnings,
+        completedJobs,
+        avgTicket: Math.round(avgTicket),
+        rating,
+        monthlyRevenue,
+        serviceBreakdown,
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to fetch analytics' });
+  }
+});
+
+// Proxy: GET /vendors/agents — delegates to the agents table filtered by this vendor
+// Fixes frontend calling /vendors/agents instead of /agents
+vendorRoutes.get('/agents', authMiddleware as any, authorizeRoles('VENDOR', 'ADMIN') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const vendor = await prisma.vendor.findUnique({ where: { userId } });
+    if (!vendor) return res.status(404).json({ success: false, message: 'Vendor profile not found' });
+
+    const agents = await prisma.agent.findMany({
+      where: { vendorId: vendor.id },
+      include: { user: { select: { firstName: true, lastName: true, email: true, phone: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.status(200).json({ success: true, data: agents });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to fetch agents' });
+  }
+});
