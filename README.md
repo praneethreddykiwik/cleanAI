@@ -62,19 +62,20 @@ clean-ai/
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/clean-ai.git
-cd clean-ai
+git clone https://github.com/<org>/cleanAI.git
+cd cleanAI
 
-# Copy environment variables
-cp .env.example .env
-# Edit .env with your values
+# Copy environment variables (there is no root .env — each app has its own)
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env.local
+# Edit both with your values
 
 # Start all services
 docker-compose up -d
 
 # The app will be available at:
 # Frontend: http://localhost:3000
-# Backend API: http://localhost:5000/api/v1
+# Backend API: http://localhost:4000/api/v1
 ```
 
 ### Option 2: Manual Setup
@@ -85,17 +86,22 @@ docker-compose up -d
 
 # 2. Backend Setup
 cd backend
-cp .env.example .env
+cp .env.example .env          # set DATABASE_URL + DIRECT_URL first
 npm install
-npx prisma migrate dev
-npm run dev
+npm run db:push               # this project uses db push, not migrations
+npm run db:seed               # optional: baseline services, vendors, agents
+npm run dev                   # http://localhost:4000
 
 # 3. Frontend Setup (new terminal)
 cd frontend
 cp .env.example .env.local
 npm install
-npm run dev
+npm run dev                   # http://localhost:3000
 ```
+
+> **Deploying or handing this repo over?** See
+> [docs/COMPANY_TRANSFER.md](docs/COMPANY_TRANSFER.md) for the Vercel setup,
+> the Supabase migration, and the secret-rotation checklist.
 
 ## 🎯 User Roles
 

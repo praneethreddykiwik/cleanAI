@@ -112,13 +112,15 @@ export function createApp(): Application {
       const geminiStatus = env.GEMINI_API_KEY ? 'available' : 'unavailable';
       const cloudinaryStatus = (process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) ? 'available' : 'unavailable';
 
-      const isHealthy = databaseStatus === 'connected' && redisStatus === 'connected';
+      // Redis is optional — the cache falls back to an in-memory Map, so its
+      // absence is degraded, not unhealthy. Only the database is fatal.
+      const isHealthy = databaseStatus === 'connected';
 
-      res.status(isHealthy ? 200 : 500).json({
-        status: isHealthy ? 'ok' : 'error',
+      res.status(isHealthy ? 200 : 503).json({
+        status: isHealthy ? (redisStatus === 'connected' ? 'ok' : 'degraded') : 'error',
         database: databaseStatus,
         redis: redisStatus,
-        socket: 'running',
+        socket: process.env.VERCEL ? 'unavailable (serverless)' : 'running',
         gemini: geminiStatus,
         cloudinary: cloudinaryStatus,
         version: '1.0.0',
@@ -137,13 +139,6 @@ export function createApp(): Application {
   app.get('/api/ready', async (_, res) => {
     try {
       await prisma.$queryRaw`SELECT 1`;
-      const { redisService } = await import('./config/redis');
-      const isRedisConnected = await redisService.ping();
-
-      if (!isRedisConnected) {
-        return res.status(503).json({ success: false, message: 'Redis Cache offline.' });
-      }
-
       res.status(200).json({ success: true, message: 'CleanAI platform services fully ready.' });
     } catch {
       res.status(503).json({ success: false, message: 'Database services offline.' });

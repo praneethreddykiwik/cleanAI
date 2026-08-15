@@ -31,8 +31,32 @@ and CORS is never an issue.
    function exits at startup in production.
 3. Redeploy from `main`. Verify:
    - `https://<domain>/` renders the app
-   - `https://<domain>/api/health` returns JSON (database: connected)
+   - `https://<domain>/api/health` returns 200 `{"status":"ok"|"degraded","database":"connected"}`
+     (`degraded` just means no Redis — that is expected and not a failure)
    - `https://<domain>/api/v1/version` returns the platform version
+
+### ⚠️ If Services is not available on the account → Plan B
+
+Services is **Beta and permission-gated** ("Permissions Required: Services" in
+the docs), and the current Vercel team is on the **Hobby** plan. If the deploy
+rejects `vercel.json` with an unknown-key/permission error on `services`, fall
+back to **two Vercel projects from the same repo** — fully supported everywhere,
+no beta features:
+
+| | Project A (web) | Project B (api) |
+|---|---|---|
+| Root Directory | `frontend` | `backend` |
+| Framework preset | Next.js | Other / Express |
+| Env vars | `NEXT_PUBLIC_API_URL` = `https://<api-domain>/api/v1`<br>`NEXT_PUBLIC_SOCKET_URL` = `https://<api-domain>` | all backend vars from §4 |
+
+Then delete the root `vercel.json` (or leave it — it is ignored when Root
+Directory points into a subfolder) and set `CORS_ORIGIN`, `FRONTEND_URL`, and
+`SOCKET_CORS_ORIGIN` on the API project to Project A's domain. CORS is already
+coded to allow any `*.vercel.app` origin, so preview deploys keep working.
+
+No code changes are needed to switch between Plan A and Plan B —
+`frontend/lib/config.ts` uses `NEXT_PUBLIC_API_URL` when set and falls back to
+same-origin when it is not.
 
 ### Known limitations on Vercel serverless (accepted trade-offs)
 
@@ -44,6 +68,9 @@ and CORS is never an issue.
   need a separate worker process (or migrate to Vercel Queues/cron).
 - **Redis** is optional — code falls back to an in-memory cache. For real
   caching on Vercel use a hosted Redis (Upstash) and set `REDIS_URL`.
+- **Rate limiting is per-instance** — the limiter keeps counts in memory, so
+  each warm function has its own bucket. For real enforcement, back it with
+  Redis or use Vercel Firewall rate limiting.
 - `express.static()` is ignored — static assets belong in `public/`.
 
 ### Region note
@@ -197,6 +224,20 @@ revoke the old ones — do not copy the old values into company infrastructure:
 
 ---
 
+## 5b. Deploy-blockers already fixed in this branch
+
+These were found by testing the repo under production conditions, not just
+locally. Listed so nobody reintroduces them:
+
+| Issue | Why it broke on Vercel | Fix |
+|---|---|---|
+| `binaryTargets` had no Linux x64 target | Vercel's runtime is Linux x64/OpenSSL 3. Prisma would throw *"could not locate the Query Engine for runtime rhel-openssl-3.0.x"* on the first query — build passes, every request 500s | Added `rhel-openssl-3.0.x` (+ musl targets for the Alpine Dockerfiles) |
+| 29 files imported via `@/` aliases | Vercel resolves imports at build time; the runtime `tsconfig-paths` shim cannot help a bundler | Converted all 57 imports to relative paths; shim removed |
+| `/api/health` required Redis | Vercel has no Redis, so a perfectly healthy deploy reported HTTP 500 — uptime monitors and Vercel health checks would flag it permanently | Only the database is fatal now; no Redis reports `200 degraded`. `/api/ready` no longer checks Redis either |
+| Root `package.json` faked a Next.js app | Made Vercel run `next build` at the repo root against a package with no app — the 2-second "up to date" build in the original logs | Deleted; Services config points at the real app dirs |
+| `db:seed` pointed at a missing file | `prisma/seed.ts` did not exist, so seeding a fresh company database would fail immediately | Real seed moved from `scratch/seed_production.ts` to `prisma/seed.ts` |
+| No Node version floor | Company builds could silently use a different major than CI/Docker | `"engines": { "node": ">=20" }` in both packages |
+
 ## 6. Pre-flight verification (already automated in CI)
 
 `.github/workflows/ci.yml` runs on every push: Prisma validate, backend lint +
@@ -209,6 +250,17 @@ Local equivalents:
 cd backend  && npm run build     # prisma generate + tsc
 cd frontend && npm run build     # next build
 ```
+
+Verified on 2026-08-15 against this branch:
+
+- backend `npm run build` → exit 0; `dist/server.js` exports a valid Express app
+  and skips `listen()` when `VERCEL=1`
+- frontend `npm run build` → exit 0 with **no** `NEXT_PUBLIC_*` set (the
+  production case), 34 routes generated
+- `/api/health`, `/api/ready`, `/api/v1/version` all return correct status codes
+  against a live process
+- `prisma generate` emits `libquery_engine-rhel-openssl-3.0.x.so.node`
+- `prisma/seed.ts` typechecks
 
 ---
 
