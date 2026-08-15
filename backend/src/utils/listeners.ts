@@ -1,6 +1,6 @@
 import { eventBus } from './event.bus';
-import { prisma } from '@/database';
-import { logger } from '@/config/logger';
+import { prisma } from '../database';
+import { logger } from '../config/logger';
 
 /**
  * Upsert a CustomerMemory entry by (customerId + key) — the only

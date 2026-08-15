@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
-import { authMiddleware, AuthenticatedRequest } from '@/middleware/auth';
-import { prisma } from '@/database';
+import { authMiddleware, AuthenticatedRequest } from '../../middleware/auth';
+import { prisma } from '../../database';
 import { NotificationType } from '@prisma/client';
 
 export const notificationRoutes = Router();

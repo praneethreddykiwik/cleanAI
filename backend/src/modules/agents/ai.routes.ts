@@ -1,8 +1,8 @@
 import { Router, Response } from 'express';
-import { authMiddleware, AuthenticatedRequest } from '@/middleware/auth';
+import { authMiddleware, AuthenticatedRequest } from '../../middleware/auth';
 import { AgentsService } from './agents.service';
 import { AIOrchestrator } from './ai.orchestrator';
-import { prisma } from '@/database';
+import { prisma } from '../../database';
 
 export const aiRoutes = Router();
 
@@ -19,7 +19,7 @@ aiRoutes.post('/analyze-job', authMiddleware as any, async (req: AuthenticatedRe
     }
 
     // Guard: fail immediately if no AI key — do not simulate
-    const { ModelRegistry } = await import('@/config/ai/model.registry');
+    const { ModelRegistry } = await import('../../config/ai/model.registry');
     if (!ModelRegistry.isConfigured()) {
       return res.status(503).json({
         success: false,
@@ -235,7 +235,7 @@ aiRoutes.get('/debug', authMiddleware as any, async (req: AuthenticatedRequest, 
   if (req.user?.role !== 'ADMIN') {
     return res.status(403).json({ success: false, message: 'Admin access required' });
   }
-  const { ModelRegistry } = await import('@/config/ai/model.registry');
+  const { ModelRegistry } = await import('../../config/ai/model.registry');
   const providerName = ModelRegistry.getActiveProviderName();
   const geminiConfigured = !!process.env.GEMINI_API_KEY;
   const groqConfigured   = !!process.env.GROQ_API_KEY;

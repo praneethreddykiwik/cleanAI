@@ -11,6 +11,7 @@ import {
 import { useRouter } from 'next/navigation';
 import type { User, LoginRequest, RegisterRequest, AuthTokens } from '@/types';
 import { toast } from 'sonner';
+import { APP_CONFIG } from '@/lib/config';
 
 interface AuthContextType {
   user: User | null;
@@ -34,7 +35,7 @@ const AuthContext = createContext<AuthContextType>({
   updateUser: () => {},
 });
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1';
+const API_BASE_URL = APP_CONFIG.apiUrl;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();

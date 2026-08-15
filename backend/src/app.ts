@@ -6,25 +6,25 @@ import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 import 'express-async-errors';
 
-import { env } from '@/config/env';
-import { logger } from '@/config/logger';
-import { globalErrorHandler, requestInitializer } from '@/middleware/error.middleware';
-import { notFoundHandler } from '@/middleware/notFoundHandler';
-import { rateLimiter } from '@/middleware/rateLimiter';
-import { prisma } from '@/database';
+import { env } from './config/env';
+import { logger } from './config/logger';
+import { globalErrorHandler, requestInitializer } from './middleware/error.middleware';
+import { notFoundHandler } from './middleware/notFoundHandler';
+import { rateLimiter } from './middleware/rateLimiter';
+import { prisma } from './database';
 
 // Route imports
-import { authRoutes } from '@/modules/auth/auth.routes';
-import { userRoutes } from '@/modules/users/users.routes';
-import { vendorRoutes } from '@/modules/vendors/vendors.routes';
-import { agentRoutes } from '@/modules/agents/agents.routes';
-import { locationRoutes } from '@/modules/agents/location.routes';
-import { bookingRoutes } from '@/modules/bookings/bookings.routes';
-import { serviceRoutes } from '@/modules/services/services.routes';
-import { notificationRoutes } from '@/modules/notifications/notifications.routes';
-import { adminRoutes } from '@/modules/admin/admin.routes';
-import { aiRoutes } from '@/modules/agents/ai.routes';
-import { paymentsRoutes } from '@/modules/payments/payments.routes';
+import { authRoutes } from './modules/auth/auth.routes';
+import { userRoutes } from './modules/users/users.routes';
+import { vendorRoutes } from './modules/vendors/vendors.routes';
+import { agentRoutes } from './modules/agents/agents.routes';
+import { locationRoutes } from './modules/agents/location.routes';
+import { bookingRoutes } from './modules/bookings/bookings.routes';
+import { serviceRoutes } from './modules/services/services.routes';
+import { notificationRoutes } from './modules/notifications/notifications.routes';
+import { adminRoutes } from './modules/admin/admin.routes';
+import { aiRoutes } from './modules/agents/ai.routes';
+import { paymentsRoutes } from './modules/payments/payments.routes';
 
 export function createApp(): Application {
   const app = express();
@@ -47,7 +47,13 @@ export function createApp(): Application {
   const allowedOrigins = [env.CORS_ORIGIN, env.FRONTEND_URL, env.SOCKET_CORS_ORIGIN].filter(Boolean);
   app.use(cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || allowedOrigins.some(o => o && origin.startsWith(o))) {
+      if (
+        !origin ||
+        allowedOrigins.includes(origin) ||
+        allowedOrigins.some(o => o && origin.startsWith(o)) ||
+        origin.endsWith('.vercel.app') ||
+        (process.env.VERCEL_URL && origin.includes(process.env.VERCEL_URL))
+      ) {
         callback(null, true);
       } else {
         callback(null, false);
@@ -96,7 +102,7 @@ export function createApp(): Application {
 
       let redisStatus = 'connected';
       try {
-        const { redisService } = await import('@/config/redis');
+        const { redisService } = await import('./config/redis');
         const isRedisConnected = await redisService.ping();
         if (!isRedisConnected) redisStatus = 'disconnected';
       } catch (err) {
@@ -131,7 +137,7 @@ export function createApp(): Application {
   app.get('/api/ready', async (_, res) => {
     try {
       await prisma.$queryRaw`SELECT 1`;
-      const { redisService } = await import('@/config/redis');
+      const { redisService } = await import('./config/redis');
       const isRedisConnected = await redisService.ping();
 
       if (!isRedisConnected) {

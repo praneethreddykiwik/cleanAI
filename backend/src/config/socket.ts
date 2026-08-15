@@ -1,10 +1,10 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import jwt from 'jsonwebtoken';
-import { env } from '@/config/env';
-import { logger } from '@/config/logger';
-import { prisma } from '@/database';
-import { eventBus } from '@/utils/event.bus';
+import { env } from './env';
+import { logger } from './logger';
+import { prisma } from '../database';
+import { eventBus } from '../utils/event.bus';
 
 interface DecodedToken {
   id: string;

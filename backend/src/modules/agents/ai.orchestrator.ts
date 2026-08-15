@@ -1,6 +1,6 @@
-import { prisma } from '@/database';
+import { prisma } from '../../database';
 import { AgentsService, JobComplexityResult, PriceEstimationBreakdown } from './agents.service';
-import { ModelRegistry } from '@/config/ai/model.registry';
+import { ModelRegistry } from '../../config/ai/model.registry';
 
 export interface ChatSessionResponse {
   conversationId: string;
@@ -206,7 +206,7 @@ export class AIOrchestrator {
       });
       timelineLogs.push({ agentName, status: '✓', details });
       try {
-        const { default: SocketService } = await import('@/config/socket');
+        const { default: SocketService } = await import('../../config/socket');
         SocketService.emitToRoom(`customer:${params.userId}`, 'agent.progress', {
           agentName,
           status: '✓',

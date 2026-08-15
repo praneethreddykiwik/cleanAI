@@ -1,4 +1,4 @@
-import { prisma } from '@/database';
+import { prisma } from '../../database';
 import { UserRole, NotificationType } from '@prisma/client';
 
 export async function createNotification(params: {

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { logger } from '@/config/logger';
+import { logger } from '../config/logger';
 
 class EventBus {
   private emitter: EventEmitter;

@@ -1,5 +1,5 @@
-import { prisma } from '@/database';
-import { eventBus } from '@/utils/event.bus';
+import { prisma } from '../../database';
+import { eventBus } from '../../utils/event.bus';
 import { BookingStatus, AuditAction } from '@prisma/client';
 
 export type OperationalState =

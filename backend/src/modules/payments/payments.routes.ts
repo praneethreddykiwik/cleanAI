@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { authMiddleware, AuthenticatedRequest } from '@/middleware/auth';
+import { authMiddleware, AuthenticatedRequest } from '../../middleware/auth';
 import { PaymentsService } from './payments.service';
 
 export const paymentsRoutes = Router();

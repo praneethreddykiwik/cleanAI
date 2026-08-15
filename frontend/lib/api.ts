@@ -1,8 +1,7 @@
 import { APP_CONFIG } from './config';
 
-const API_BASE_URL = APP_CONFIG.apiUrl;
-
 export async function apiCall(endpoint: string, options: RequestInit = {}) {
+  const API_BASE_URL = APP_CONFIG.apiUrl;
   let token = null;
   if (typeof window !== 'undefined') {
     const tokensStr = localStorage.getItem('cleanai_tokens');

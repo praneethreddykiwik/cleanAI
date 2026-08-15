@@ -18,14 +18,11 @@ const envSchema = z.object({
   REDIS_URL: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),   // Real AI — Google Gemini 2.5 Flash
   GROQ_API_KEY: z.string().optional(),     // Real AI alternative — Groq Llama Vision (faster/free tier)
-  CLOUDINARY_URL: z.string().optional(),
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
-  GOOGLE_MAPS_API_KEY: z.string().optional(),
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),
-  RESEND_API_KEY: z.string().optional(),
   DIRECT_URL: z.string().optional(),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.string().optional(),

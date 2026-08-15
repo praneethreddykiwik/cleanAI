@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
-import { authMiddleware, authorizeRoles, AuthenticatedRequest } from '@/middleware/auth';
-import { prisma } from '@/database';
+import { authMiddleware, authorizeRoles, AuthenticatedRequest } from '../../middleware/auth';
+import { prisma } from '../../database';
 import { createNotification } from '../notifications/notification.service';
 import { VendorStatus } from '@prisma/client';
 

@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
-import { authMiddleware, authorizeRoles, AuthenticatedRequest } from '@/middleware/auth';
-import { prisma } from '@/database';
+import { authMiddleware, authorizeRoles, AuthenticatedRequest } from '../../middleware/auth';
+import { prisma } from '../../database';
 
 export const vendorRoutes = Router();
 

@@ -1,5 +1,5 @@
-import { prisma } from '@/database';
-import { redisService } from '@/config/redis';
+import { prisma } from '../../database';
+import { redisService } from '../redis';
 import { logger } from '../logger';
 
 export interface CustomerFeatures {

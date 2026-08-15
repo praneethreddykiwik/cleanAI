@@ -15,11 +15,11 @@ export class EnvValidator {
   private static optionalVars: Array<{ key: string; fallback: string }> = [
     { key: 'GEMINI_API_KEY',    fallback: 'AI analysis disabled — /ai/analyze-job returns 503 until a key is set' },
     { key: 'GROQ_API_KEY',      fallback: 'AI analysis disabled — set this OR GEMINI_API_KEY (Groq takes priority)' },
-    { key: 'CLOUDINARY_URL',    fallback: 'Image uploads return mock URLs' },
+    { key: 'CLOUDINARY_CLOUD_NAME', fallback: 'Image uploads return mock URLs' },
     { key: 'REDIS_URL',         fallback: 'Caching uses in-memory Map fallback' },
     { key: 'RAZORPAY_KEY_ID',   fallback: 'Payments run in mock mode' },
     { key: 'RAZORPAY_KEY_SECRET', fallback: 'Payments run in mock mode' },
-    { key: 'RESEND_API_KEY',    fallback: 'Emails are skipped (logged only)' },
+    { key: 'SMTP_USER',         fallback: 'Emails are skipped (logged only)' },
   ];
 
   private static isPlaceholder(val: string): boolean {

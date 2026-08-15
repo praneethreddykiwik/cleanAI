@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
-import { authMiddleware, AuthenticatedRequest } from '@/middleware/auth';
-import { prisma } from '@/database';
-import { SocketService } from '@/config/socket';
+import { authMiddleware, AuthenticatedRequest } from '../../middleware/auth';
+import { prisma } from '../../database';
+import { SocketService } from '../../config/socket';
 
 export const locationRoutes = Router();
 

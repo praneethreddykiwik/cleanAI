@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
-import { authMiddleware, AuthenticatedRequest } from '@/middleware/auth';
-import { prisma } from '@/database';
-import { MediaStorageService } from '@/config/cloudinary';
+import { authMiddleware, AuthenticatedRequest } from '../../middleware/auth';
+import { prisma } from '../../database';
+import { MediaStorageService } from '../../config/cloudinary';
 
 export const userRoutes = Router();
 

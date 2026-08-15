@@ -1,8 +1,8 @@
-import { prisma } from '@/database';
-import { ModelRegistry, JobComplexityResult, WCISubScores, ConfidenceGatingStatus } from '@/config/ai/model.registry';
+import { prisma } from '../../database';
+import { ModelRegistry, JobComplexityResult, WCISubScores, ConfidenceGatingStatus } from '../../config/ai/model.registry';
 import * as crypto from 'crypto';
-import { redisService } from '@/config/redis';
-import { logger } from '@/config/logger';
+import { redisService } from '../../config/redis';
+import { logger } from '../../config/logger';
 
 export type { JobComplexityResult, WCISubScores, ConfidenceGatingStatus };
 
@@ -321,7 +321,7 @@ export class AgentsService {
           result = await provider.analyzeImage(imageBufferBase64);
         } else {
           // TEXT-ONLY PATH: send full prompt with user description
-          const { JOB_ANALYSIS_PROMPT } = await import('@/config/ai/model.registry');
+          const { JOB_ANALYSIS_PROMPT } = await import('../../config/ai/model.registry');
           const fullPrompt = `${JOB_ANALYSIS_PROMPT}
 
 User description: "${userDescription}"

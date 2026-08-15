@@ -4,12 +4,10 @@ import axios, {
   type InternalAxiosRequestConfig,
 } from 'axios';
 import type { ApiResponse } from '@/types';
-
-const BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1'; // backend runs on 4000
+import { APP_CONFIG } from '@/lib/config';
 
 export const apiClient: AxiosInstance = axios.create({
-  baseURL: BASE_URL,
+  baseURL: APP_CONFIG.apiUrl,
   timeout: 30000,
   headers: { 'Content-Type': 'application/json' },
   withCredentials: true,
@@ -47,7 +45,7 @@ apiClient.interceptors.response.use(
         if (tokensStr) {
           const tokens = JSON.parse(tokensStr);
           const response = await axios.post(
-            `${BASE_URL}/auth/refresh`,
+            `${APP_CONFIG.apiUrl}/auth/refresh`,
             { refreshToken: tokens.refreshToken }
           );
           const newTokens = response.data.data;

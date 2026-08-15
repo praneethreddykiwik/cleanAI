@@ -1,8 +1,8 @@
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
-import { prisma } from '@/database';
-import { logger } from '@/config/logger';
-import { eventBus } from '@/utils/event.bus';
+import { prisma } from '../../database';
+import { logger } from '../../config/logger';
+import { eventBus } from '../../utils/event.bus';
 import { PaymentStatus } from '@prisma/client';
 
 const isRazorpayConfigured = !!(

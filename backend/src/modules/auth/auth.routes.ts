@@ -1,9 +1,9 @@
 import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { env } from '@/config/env';
-import { prisma } from '@/database';
-import { authMiddleware, AuthenticatedRequest } from '@/middleware/auth';
+import { env } from '../../config/env';
+import { prisma } from '../../database';
+import { authMiddleware, AuthenticatedRequest } from '../../middleware/auth';
 
 export const authRoutes = Router();
 

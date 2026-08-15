@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
-import { authMiddleware, AuthenticatedRequest } from '@/middleware/auth';
-import { prisma } from '@/database';
+import { authMiddleware, AuthenticatedRequest } from '../../middleware/auth';
+import { prisma } from '../../database';
 import { BookingStatus, PaymentStatus } from '@prisma/client';
 import { createNotification } from '../notifications/notification.service';
 import { BookingStateMachine } from './booking.state.machine';

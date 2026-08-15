@@ -1,4 +1,4 @@
-import { prisma } from '@/database';
+import { prisma } from '../../database';
 import { logger } from '../logger';
 
 export interface PriceBreakdown {

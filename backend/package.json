@@ -5,7 +5,8 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev -r tsconfig-paths/register --respawn --transpile-only src/server.ts",
-    "build": "tsc",
+    "build": "prisma generate && tsc",
+    "postinstall": "prisma generate",
     "start": "ts-node -r tsconfig-paths/register --transpile-only src/server.ts",
     "start:prod": "node -r tsconfig-paths/register dist/server.js",
     "lint": "eslint src --ext .ts",
