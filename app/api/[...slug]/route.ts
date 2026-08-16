@@ -15,11 +15,30 @@ export const dynamic = 'force-dynamic';
  * arrives, so the build only ever type-checks this code.
  */
 async function handler(request: Request): Promise<Response> {
-  const [{ getApp }, { handleWithExpress }] = await Promise.all([
-    import('@/server'),
-    import('@/server/http-bridge'),
-  ]);
-  return handleWithExpress(getApp(), request);
+  try {
+    const [{ getApp }, { handleWithExpress }] = await Promise.all([
+      import('@/server'),
+      import('@/server/http-bridge'),
+    ]);
+    return await handleWithExpress(getApp(), request);
+  } catch (error) {
+    // Anything thrown here happened before Express could handle the request —
+    // a missing environment variable, or a Prisma engine that failed to load.
+    // Without this catch the function dies and the client receives a 500 with
+    // an EMPTY body, so `response.json()` in the browser fails with
+    // "Unexpected end of JSON input" and hides the real cause.
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[api] failed before reaching Express:', error);
+
+    return Response.json(
+      {
+        success: false,
+        message: 'API failed to start. Check the server configuration.',
+        error: message,
+      },
+      { status: 500 }
+    );
+  }
 }
 
 export {
