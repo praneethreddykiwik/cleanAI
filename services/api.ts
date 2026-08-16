@@ -48,12 +48,16 @@ apiClient.interceptors.response.use(
             `${APP_CONFIG.apiUrl}/auth/refresh`,
             { refreshToken: tokens.refreshToken }
           );
-          const newTokens = response.data.data;
+          // Merge rather than replace: if the server ever omits a field, keeping
+          // the existing refresh token is what allows the session to continue.
+          const newTokens = { ...tokens, ...response.data.data };
           localStorage.setItem('cleanai_tokens', JSON.stringify(newTokens));
-          localStorage.setItem(
-            'cleanai_token_expiry',
-            String(Date.now() + newTokens.expiresIn * 1000)
-          );
+          if (typeof newTokens.expiresIn === 'number') {
+            localStorage.setItem(
+              'cleanai_token_expiry',
+              String(Date.now() + newTokens.expiresIn * 1000)
+            );
+          }
           originalRequest.headers.Authorization = `Bearer ${newTokens.accessToken}`;
           return apiClient(originalRequest);
         }

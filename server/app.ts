@@ -9,7 +9,8 @@ import { env } from './config/env';
 import { logger } from './config/logger';
 import { globalErrorHandler, requestInitializer } from './middleware/error.middleware';
 import { notFoundHandler } from './middleware/notFoundHandler';
-import { rateLimiter } from './middleware/rateLimiter';
+import { rateLimiter, makeAuthRateLimiter } from './middleware/rateLimiter';
+import { authMiddleware, authorizeRoles } from './middleware/auth';
 import { prisma } from './database';
 
 // Route imports
@@ -30,7 +31,14 @@ export function createApp(): Application {
 
   // Requests arrive through Next.js behind Vercel's proxy, so the client IP
   // lives in X-Forwarded-For. Rate limiting and logging depend on req.ip.
-  app.set('trust proxy', true);
+  //
+  // The bridge has already resolved the real client IP into the socket, taking
+  // the right-most (platform-appended) X-Forwarded-For entry. Express must NOT
+  // re-read that header: with `trust proxy` enabled it would prefer the
+  // left-most, caller-supplied value and the rate limiter could be reset at will
+  // by sending a different fake IP each request. `false` makes req.ip come
+  // straight from the address the bridge resolved.
+  app.set('trust proxy', false);
 
   // ==================
   // Security Middleware
@@ -88,6 +96,11 @@ export function createApp(): Application {
   // ==================
   // Rate Limiting
   // ==================
+  // Credential endpoints are throttled hard; everything else gets the general
+  // budget. Order matters — the stricter limiter has to be registered first.
+  app.use(`/api/${env.API_VERSION}/auth/login`, makeAuthRateLimiter());
+  app.use(`/api/${env.API_VERSION}/auth/register`, makeAuthRateLimiter());
+  app.use(`/api/${env.API_VERSION}/auth/forgot-password`, makeAuthRateLimiter());
   app.use('/api', rateLimiter);
 
   // ==================
@@ -150,7 +163,9 @@ export function createApp(): Application {
     }
   });
 
-  app.get('/api/metrics', async (_, res) => {
+  // Admin-only: this returns booking counts and total revenue. It was public,
+  // which meant anyone who guessed the URL could read the platform's financials.
+  app.get('/api/metrics', authMiddleware as any, authorizeRoles('ADMIN') as any, async (_: any, res: any) => {
     try {
       const bookingsCount = await prisma.booking.count();
       const paymentsTotal = await prisma.payment.aggregate({

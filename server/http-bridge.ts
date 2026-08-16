@@ -22,10 +22,24 @@ export function handleWithExpress(app: Application, request: Request): Promise<R
 
       // A socket is required for IncomingMessage; it is never connected. The
       // address matters because express-rate-limit and morgan read `req.ip`.
+      //
+      // X-Forwarded-For is only meaningful behind a proxy we trust. Vercel
+      // appends the client address it actually observed, so the RIGHT-most entry
+      // is authoritative there; anything the caller sent themselves sits to the
+      // left of it. Off-platform there is no such guarantee, so the header is
+      // ignored entirely rather than believed.
+      //
+      // Getting this wrong is a rate-limit bypass: reading the left-most value
+      // (or trusting the header with no proxy present) lets a caller mint a new
+      // identity per request and never exhaust their quota.
       const socket = new Socket();
-      const forwardedFor = request.headers.get('x-forwarded-for');
+      const behindTrustedProxy = Boolean(process.env.VERCEL);
+      const forwarded = behindTrustedProxy
+        ? (request.headers.get('x-forwarded-for')?.split(',') ?? [])
+        : [];
+      const clientIp = forwarded.length ? forwarded[forwarded.length - 1].trim() : '';
       Object.defineProperty(socket, 'remoteAddress', {
-        value: forwardedFor?.split(',')[0].trim() || '127.0.0.1',
+        value: clientIp || '127.0.0.1',
         writable: false,
         configurable: true,
       });

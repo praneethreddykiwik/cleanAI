@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { env } from '../../config/env';
@@ -8,11 +9,49 @@ import { authMiddleware, AuthenticatedRequest } from '../../middleware/auth';
 export const authRoutes = Router();
 
 // Onboarding & Signup
+// A visitor may only ever create these. ADMIN and AGENT accounts are made by an
+// admin — accepting them here let anyone POST role:"ADMIN" and read every user.
+const SELF_SERVICE_ROLES = ['CUSTOMER', 'VENDOR'] as const;
+type SelfServiceRole = (typeof SELF_SERVICE_ROLES)[number];
+
+const isSelfServiceRole = (value: unknown): value is SelfServiceRole =>
+  typeof value === 'string' && (SELF_SERVICE_ROLES as readonly string[]).includes(value);
+
 authRoutes.post('/register', async (req, res) => {
   const { email, phone, firstName, lastName, password, role } = req.body;
 
   if (!email || !phone || !firstName || !lastName || !password || !role) {
     return res.status(400).json({ success: false, message: 'All registration fields are required' });
+  }
+
+  // Reject non-strings before they reach Prisma. Passing an object or array
+  // through raised a 500 that echoed the raw ORM error, including table and
+  // column names, straight back to the caller.
+  if (
+    typeof email !== 'string' ||
+    typeof phone !== 'string' ||
+    typeof firstName !== 'string' ||
+    typeof lastName !== 'string' ||
+    typeof password !== 'string' ||
+    typeof role !== 'string'
+  ) {
+    return res.status(400).json({ success: false, message: 'All registration fields must be text values' });
+  }
+
+  if (!isSelfServiceRole(role)) {
+    return res.status(400).json({ success: false, message: 'Role must be either CUSTOMER or VENDOR' });
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ success: false, message: 'Please provide a valid email address' });
+  }
+
+  if (password.length < 8) {
+    return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
+  }
+
+  if (!/^\+?[0-9]{10,15}$/.test(phone.replace(/[\s-]/g, ''))) {
+    return res.status(400).json({ success: false, message: 'Please provide a valid phone number' });
   }
 
   try {
@@ -76,9 +115,11 @@ authRoutes.post('/register', async (req, res) => {
       expiresIn: env.JWT_EXPIRES_IN as any,
     });
 
-    const refreshToken = jwt.sign({ sub: user.id, role: user.role }, env.JWT_REFRESH_SECRET, {
-      expiresIn: env.JWT_REFRESH_EXPIRES_IN as any,
-    });
+    const refreshToken = jwt.sign(
+      { sub: user.id, role: user.role, jti: randomUUID() },
+      env.JWT_REFRESH_SECRET,
+      { expiresIn: env.JWT_REFRESH_EXPIRES_IN as any }
+    );
 
     // Save refresh token
     await prisma.refreshToken.create({
@@ -127,6 +168,12 @@ authRoutes.post('/login', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Email and password are required' });
   }
 
+  // A non-string email reached prisma.user.findUnique and returned a 500 whose
+  // body was the raw ORM error — query shape, table and column names included.
+  if (typeof email !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ success: false, message: 'Email and password must be text values' });
+  }
+
   try {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
@@ -138,9 +185,14 @@ authRoutes.post('/login', async (req, res) => {
       expiresIn: env.JWT_EXPIRES_IN as any,
     });
 
-    const refreshToken = jwt.sign({ sub: user.id, role: user.role }, env.JWT_REFRESH_SECRET, {
-      expiresIn: env.JWT_REFRESH_EXPIRES_IN as any,
-    });
+    // `jti` makes each refresh token unique. Without it the payload is just
+    // {sub, role, iat}, so two logins in the same second produced byte-identical
+    // JWTs and the second one blew up on the unique constraint with a 500.
+    const refreshToken = jwt.sign(
+      { sub: user.id, role: user.role, jti: randomUUID() },
+      env.JWT_REFRESH_SECRET,
+      { expiresIn: env.JWT_REFRESH_EXPIRES_IN as any }
+    );
 
     // Revoke old refresh tokens
     await prisma.refreshToken.deleteMany({ where: { userId: user.id } });
@@ -210,9 +262,19 @@ authRoutes.post('/refresh', async (req, res) => {
       expiresIn: env.JWT_EXPIRES_IN as any,
     });
 
+    // Return the COMPLETE token set. Sending back only the access token made the
+    // client overwrite its stored credentials with a partial object: the refresh
+    // token was lost and expiresIn became NaN, so the very next refresh sent
+    // `undefined` and logged the user out mid-session.
+    const { exp } = jwt.decode(accessToken) as { exp: number };
+
     res.status(200).json({
       success: true,
-      data: { accessToken },
+      data: {
+        accessToken,
+        refreshToken,
+        expiresIn: exp - Math.floor(Date.now() / 1000),
+      },
     });
   } catch (error: any) {
     res.status(401).json({ success: false, message: 'Token refresh failed' });
@@ -422,7 +484,7 @@ authRoutes.post('/verify-otp', async (req, res) => {
 
     await prisma.user.update({ where: { id: user.id }, data: { isPhoneVerified: true } });
     const accessToken = jwt.sign({ sub: user.id, role: user.role }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN as any });
-    const refreshToken = jwt.sign({ sub: user.id, role: user.role }, env.JWT_REFRESH_SECRET, { expiresIn: env.JWT_REFRESH_EXPIRES_IN as any });
+    const refreshToken = jwt.sign({ sub: user.id, role: user.role, jti: randomUUID() }, env.JWT_REFRESH_SECRET, { expiresIn: env.JWT_REFRESH_EXPIRES_IN as any });
     await prisma.refreshToken.create({ data: { userId: user.id, token: refreshToken, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) } });
 
     res.status(200).json({ success: true, data: { accessToken, refreshToken, user: { id: user.id, role: user.role } } });
