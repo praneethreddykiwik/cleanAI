@@ -3,8 +3,11 @@ import { z } from 'zod';
 
 dotenv.config();
 
+// NOTE: this file targets Zod 4 (shared with the UI's form schemas). Two v3
+// idioms had to change: `.default()` now takes the OUTPUT type, so PORT uses
+// `z.coerce.number()`, and `error.format()` is gone in favour of `issues`.
 const envSchema = z.object({
-  PORT: z.string().transform((val) => parseInt(val, 10)).default('4000'),
+  PORT: z.coerce.number().default(4000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   API_VERSION: z.string().default('v1'),
   DATABASE_URL: z.string().default('postgresql://postgres:postgres@localhost:5432/cleanai?schema=public'),
@@ -38,8 +41,11 @@ const envSchema = z.object({
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
-  console.error('❌ Invalid environment variables:', parsed.error.format());
-  process.exit(1);
+  const details = parsed.error.issues
+    .map((issue) => `  - ${issue.path.join('.') || '(root)'}: ${issue.message}`)
+    .join('\n');
+  console.error(`❌ Invalid environment variables:\n${details}`);
+  throw new Error('Invalid environment variables — see the list above.');
 }
 
 // Strict production check — only truly fatal vars
@@ -56,8 +62,7 @@ if (process.env.NODE_ENV === 'production') {
   }
 
   if (missing.length > 0) {
-    console.error(`❌ PRODUCTION STARTUP BLOCKED — missing critical env vars: ${missing.join(', ')}`);
-    process.exit(1);
+    throw new Error(`PRODUCTION STARTUP BLOCKED — missing critical env vars: ${missing.join(', ')}`);
   }
 }
 

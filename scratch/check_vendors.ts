@@ -1,4 +1,4 @@
-import { prisma } from '../src/database';
+import { prisma } from '../server/database';
 
 async function checkVendors() {
   const vendors = await prisma.vendor.findMany({

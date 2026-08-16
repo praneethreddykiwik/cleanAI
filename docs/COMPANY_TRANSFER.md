@@ -6,93 +6,78 @@ infrastructure (company GitHub org, Supabase, company Vercel team).
 
 ---
 
-## 1. How the app deploys on Vercel (single project, two services)
+## 1. Architecture: one Next.js app
 
-The repo is a monorepo: `frontend/` (Next.js) and `backend/` (Express + Prisma).
-It deploys as **ONE Vercel project** using [Vercel Services](https://vercel.com/docs/services)
-(Beta, available on all plans). The root `vercel.json` defines both services and
-routes traffic:
+The repo is **a single Next.js application at the repo root**. There is no
+separate frontend/backend folder and no monorepo tooling.
 
-- `/api/*` → `backend` service (Express, entrypoint `src/server.ts`)
-- everything else → `frontend` service (Next.js)
+```
+app/                 UI routes + app/api/[...slug]/route.ts  ← API entrypoint
+server/              the Express application (routes, services, middleware)
+  app.ts             createApp() — all 81 endpoints
+  http-bridge.ts     runs Express inside a Next.js Route Handler
+  index.ts           caches the app across warm invocations
+prisma/              schema + seed
+components/ lib/ hooks/ ...   the UI
+```
 
-Both run on the same domain, so the frontend needs **no** `NEXT_PUBLIC_API_URL`
-in production — it falls back to same-origin `/api/v1` (see `frontend/lib/config.ts`)
-and CORS is never an issue.
+Every request to `/api/*` hits the catch-all Route Handler, which passes it
+through the existing Express stack. Express sees the **original path**
+(`/api/v1/bookings`), so all routes, middleware, auth, and error handling work
+exactly as they did on the standalone server — the API was mounted, not
+rewritten.
 
-### One-time Vercel dashboard setup (required — this was the build failure)
+### Deploying
 
-1. Project → **Settings → Build and Deployment** → set **Framework** to
-   **Services** (NOT Next.js — that is why builds failed with
-   "No Next.js version detected": the repo root is not a Next.js app).
-   Leave Root Directory at the repo root (`./`).
-2. Project → **Settings → Environment Variables** → add the backend variables
-   (table in §4). Without `DATABASE_URL`/`JWT_SECRET`/one AI key, the backend
-   function exits at startup in production.
-3. Redeploy from `main`. Verify:
-   - `https://<domain>/` renders the app
-   - `https://<domain>/api/health` returns 200 `{"status":"ok"|"degraded","database":"connected"}`
-     (`degraded` just means no Redis — that is expected and not a failure)
-   - `https://<domain>/api/v1/version` returns the platform version
+Vercel auto-detects Next.js. No configuration needed:
 
-### ⚠️ If Services is not available on the account → Plan B
+| Setting | Value |
+|---|---|
+| Framework Preset | Next.js (auto-detected) |
+| Root Directory | `./` |
+| Build Command | default (`npm run build` → `prisma generate && next build`) |
 
-Services is **Beta and permission-gated** ("Permissions Required: Services" in
-the docs), and the current Vercel team is on the **Hobby** plan. If the deploy
-rejects `vercel.json` with an unknown-key/permission error on `services`, fall
-back to **two Vercel projects from the same repo** — fully supported everywhere,
-no beta features:
+Add the environment variables from `.env.example` under
+**Settings → Environment Variables**, then deploy. Verify:
 
-| | Project A (web) | Project B (api) |
-|---|---|---|
-| Root Directory | `frontend` | `backend` |
-| Framework preset | Next.js | Other / Express |
-| Env vars | `NEXT_PUBLIC_API_URL` = `https://<api-domain>/api/v1`<br>`NEXT_PUBLIC_SOCKET_URL` = `https://<api-domain>` | all backend vars from §4 |
+- `https://<domain>/` renders the app
+- `https://<domain>/api/health` → `200 {"status":"ok","database":"connected"}`
+  (`"degraded"` just means no Redis — expected, not a failure)
+- `https://<domain>/api/v1/version` → platform version
 
-Then delete the root `vercel.json` (or leave it — it is ignored when Root
-Directory points into a subfolder) and set `CORS_ORIGIN`, `FRONTEND_URL`, and
-`SOCKET_CORS_ORIGIN` on the API project to Project A's domain. CORS is already
-coded to allow any `*.vercel.app` origin, so preview deploys keep working.
+### Known limitations on serverless
 
-No code changes are needed to switch between Plan A and Plan B —
-`frontend/lib/config.ts` uses `NEXT_PUBLIC_API_URL` when set and falls back to
-same-origin when it is not.
-
-### Known limitations on Vercel serverless (accepted trade-offs)
-
-- **Socket.IO server does not run** — real-time features are disabled on Vercel
-  (`src/server.ts` skips it when `process.env.VERCEL` is set). If real-time is
-  required later, host the backend on a long-running platform (Render/Railway/Fly)
-  and set `NEXT_PUBLIC_SOCKET_URL`.
-- **BullMQ queue workers do not run** in serverless functions. Jobs enqueue but
-  need a separate worker process (or migrate to Vercel Queues/cron).
-- **Redis** is optional — code falls back to an in-memory cache. For real
-  caching on Vercel use a hosted Redis (Upstash) and set `REDIS_URL`.
-- **Rate limiting is per-instance** — the limiter keeps counts in memory, so
-  each warm function has its own bucket. For real enforcement, back it with
-  Redis or use Vercel Firewall rate limiting.
-- `express.static()` is ignored — static assets belong in `public/`.
+- **Socket.IO does not run.** Vercel functions do not hold open connections.
+  `lib/socket.ts` will attempt to connect and fail; real-time features are
+  dark. If they become a requirement, host `server/` separately on a
+  long-running platform (Render/Railway/Fly) and point
+  `NEXT_PUBLIC_SOCKET_URL` at it.
+- **BullMQ workers do not run.** Jobs enqueue but nothing consumes them
+  without a separate worker process.
+- **Redis is optional** — the cache falls back to an in-memory Map. Use a
+  hosted Redis (Upstash) and set `REDIS_URL` for a real cache.
+- **Rate limiting is per-instance** — counts live in memory, so each warm
+  function has its own bucket. Back it with Redis for real enforcement.
+- **`maxDuration` is 60s** for the API function (set in `vercel.json`).
 
 ### Region note
 
-Vercel functions default to `iad1` (US East), which matches the current Neon DB
-(us-east-1). **When you switch to Supabase in `ap-south-1` (Mumbai), add**
-`"regions": ["bom1"]` at the top level of `vercel.json` so functions run next to
-the database — otherwise every query pays ~200 ms of cross-continent latency.
+Functions default to `iad1` (US East). **When you move to Supabase in
+`ap-south-1` (Mumbai), add `"regions": ["bom1"]` to `vercel.json`** so
+functions run next to the database — otherwise every query pays ~200 ms
+crossing continents.
 
 ---
 
 ## 2. GitHub → company org
 
-Everything needed for deploy is committed. `.env` files were **never** committed
-(verified across full git history) — only `.env.example` templates are tracked.
+`.env` files were **never** committed (verified across full history); only
+`.env.example` is tracked.
 
-**Option A — Transfer the repo (recommended: keeps history, issues, stars):**
-1. GitHub → `praneethreddykiwik/cleanAI` → Settings → General → Danger Zone →
-   **Transfer ownership** → enter the company org name.
-2. An org owner accepts the transfer.
-3. Old URLs redirect, but update local remotes anyway:
-   `git remote set-url origin git@github.com:<company-org>/cleanAI.git`
+**Option A — Transfer the repo (keeps history and issues):**
+1. GitHub → repo → Settings → Danger Zone → **Transfer ownership** → company org.
+2. An org owner accepts.
+3. `git remote set-url origin git@github.com:<company-org>/cleanAI.git`
 
 **Option B — Fresh company repo:**
 ```bash
@@ -100,16 +85,14 @@ git remote add company git@github.com:<company-org>/cleanAI.git
 git push company main
 ```
 
-**After either option:** in the company Vercel team, import the repo
-(Add New → Project) and apply the dashboard setup from §1. Delete/pause the
-personal Vercel project once the company one serves traffic.
+Then import the repo in the company Vercel team and delete the personal project.
 
 ---
 
 ## 3. Database → Supabase (from Neon)
 
-Prisma is provider-agnostic Postgres — only the two connection strings change.
-`prisma/schema.prisma` already uses `url` (pooled) + `directUrl` (migrations).
+Only the two connection strings change — `prisma/schema.prisma` already uses
+`url` (pooled) + `directUrl` (migrations).
 
 ### ⚠️ Blocker: Supabase free-project limit reached
 
@@ -121,155 +104,104 @@ The company Supabase org (**ANIL YERUPULA**, `douoobjulsmndbdzlfwl`) is at its
 | `Runway` | ap-south-1 | Criska event platform — 11 companies, 19 events, 32 tasks, invoices, contracts | ❌ in active use |
 | `kiwik` | ap-south-1 | Marketing site CMS — 58 visitor sessions, products, projects | ❌ in active use |
 
-**Pick one to unblock:**
-- **Upgrade the org to Pro** (~$25/mo) → unlimited-ish projects, then create `cleanai`. Recommended: neither existing project gets disturbed.
-- **Pause a project** you no longer need (Supabase → Project Settings → Pause).
-- **Create `cleanai` under a new Supabase org** owned by the company.
+**Pick one to unblock:** upgrade the org to Pro (~$25/mo, disturbs nothing),
+pause a project you no longer need, or create `cleanai` under a new
+company-owned Supabase org. Then create it in **ap-south-1**.
 
-Once a slot is free, create the project in **ap-south-1** (matches the other two,
-and Razorpay/India-facing traffic) and continue with 3a below.
+### 3a. Point the app at Supabase
 
-### Current data in Neon (as of 2026-08-15)
-
-~530 rows, all development data — 19 users, 5 vendors, 2 agents, 2 bookings,
-12 services, plus ~330 rows of logs/sessions. **Recommendation: skip the data
-copy (§3c) and re-seed instead.** Nothing here looks like production records.
-
-### 3a. Point the backend at Supabase
-
-Supabase Dashboard → Project → Connect → get both strings:
-
-```env
-# Runtime (transaction pooler, port 6543)
-DATABASE_URL="postgresql://postgres.<project-ref>:<db-password>@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1"
-# Migrations (session pooler, port 5432)
-DIRECT_URL="postgresql://postgres.<project-ref>:<db-password>@aws-1-ap-south-1.pooler.supabase.com:5432/postgres"
-```
+Supabase Dashboard → Connect → copy both strings into `DATABASE_URL` (port
+6543, `pgbouncer=true`) and `DIRECT_URL` (port 5432).
 
 ### 3b. Create the schema
 
 ```bash
-cd backend
-npx prisma db push        # creates all 42 tables on the empty Supabase DB
-npm run db:seed           # optional: seed baseline data
+npm run db:push     # creates all 42 tables
+npm run db:seed     # optional: baseline services, vendors, agents
 ```
 
-(There is no `prisma/migrations/` history — the project uses `db push`.)
+There is no `prisma/migrations/` history — this project uses `db push`. If you
+prefer raw SQL (e.g. the Supabase SQL editor), `prisma/sql/init_schema.sql` is
+the complete pre-generated DDL.
 
-Alternative, if you prefer applying SQL directly (e.g. via the Supabase SQL
-editor): `backend/prisma/sql/init_schema.sql` is the complete generated DDL —
-all enums, tables, indexes, and foreign keys — pre-generated from the Prisma
-schema so it can be run without a working Prisma CLI.
+### 3c. Copy existing data (only if it must be kept)
 
-### 3c. Copy existing data from Neon (only if production data must be kept)
+Current Neon contents: **~530 rows, all development data** — 19 users, 5
+vendors, 2 agents, 2 bookings, 12 services, and ~330 rows of logs.
+**Recommendation: skip the copy and re-seed.** If you do need it:
 
 ```bash
-# 1. Dump data from Neon (data only — schema comes from prisma db push)
 pg_dump "<NEON_DIRECT_URL>" --data-only --no-owner --no-privileges \
         --disable-triggers -f neon_data.sql
-
-# 2. Restore into Supabase (direct connection, port 5432)
 psql "<SUPABASE_DIRECT_URL>" -v ON_ERROR_STOP=1 \
      -c "SET session_replication_role = replica;" -f neon_data.sql
 ```
 
-If the current data is only dev/test data, skip this and re-seed instead.
-
-### 3d. Update env everywhere
-
-- `backend/.env` (local) — swap both URLs
-- Vercel → Environment Variables — swap both URLs
-- Add `"regions": ["bom1"]` to `vercel.json` (see §1 region note)
-
-Then pause/delete the Neon project so nothing keeps writing to it.
+Then pause the Neon project so nothing keeps writing to it.
 
 ---
 
-## 4. Environment variables on Vercel (company project)
+## 4. Environment variables
+
+All keys live in one place now — see `.env.example` for the annotated list.
 
 | Variable | Required | Notes |
 |---|---|---|
-| `DATABASE_URL` | ✅ | Supabase pooled string (port 6543, `pgbouncer=true`) |
-| `DIRECT_URL` | ✅ | Supabase direct string (port 5432) |
-| `JWT_SECRET` | ✅ | ≥32 chars — generate fresh, never reuse the dev value |
+| `DATABASE_URL` | ✅ | Supabase pooled string (6543, `pgbouncer=true`) |
+| `DIRECT_URL` | ✅ | Supabase direct string (5432) |
+| `JWT_SECRET` | ✅ | ≥32 chars — generate fresh |
 | `JWT_REFRESH_SECRET` | ✅ | ≥32 chars — generate fresh |
-| `GEMINI_API_KEY` / `GROQ_API_KEY` | ✅ one of | Production startup is blocked if both missing |
+| `GEMINI_API_KEY` / `GROQ_API_KEY` | ✅ one of | Production startup blocked if both missing |
 | `NODE_ENV` | ✅ | `production` |
-| `CORS_ORIGIN`, `FRONTEND_URL`, `SOCKET_CORS_ORIGIN` | recommended | Set to the production domain (`*.vercel.app` origins are also auto-allowed) |
-| `CLOUDINARY_CLOUD_NAME` / `_API_KEY` / `_API_SECRET` | optional | Image uploads mock-mode while empty |
-| `REDIS_URL` | optional | Upstash `rediss://` URL; in-memory fallback otherwise |
-| `SMTP_HOST/PORT/USER/PASS/SECURE/FROM` | optional | Emails skipped while empty |
-| `RAZORPAY_KEY_ID` / `_KEY_SECRET` | optional | Payments mock-mode while empty |
-| `FIREBASE_PROJECT_ID` / `_CLIENT_EMAIL` / `_PRIVATE_KEY` | optional | Push notifications |
-| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | optional | Frontend maps |
-| `NEXT_PUBLIC_API_URL` / `_SOCKET_URL` / `_APP_URL` | **leave unset** | Same-origin routing is automatic in the single-project setup |
-
-Removed as unused (referenced nowhere in code): `RESEND_API_KEY`,
-backend `GOOGLE_MAPS_API_KEY`.
+| `CORS_ORIGIN`, `FRONTEND_URL`, `SOCKET_CORS_ORIGIN` | recommended | Production domain |
+| `CLOUDINARY_*` | optional | Uploads mock-mode while empty |
+| `REDIS_URL` | optional | In-memory fallback otherwise |
+| `SMTP_*` | optional | Emails skipped while empty |
+| `RAZORPAY_*` | optional | Payments mock-mode while empty |
+| `FIREBASE_*` | optional | Push notifications |
+| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | optional | Maps widgets |
+| `NEXT_PUBLIC_API_URL` / `_SOCKET_URL` / `_APP_URL` | **leave unset** | Same-origin is automatic |
 
 ---
 
 ## 5. 🔴 Secret rotation checklist (do this during the transfer)
 
-All of these currently exist as **personal-account credentials** in local `.env`
-files. When the company takes over, create **new company-owned** credentials and
-revoke the old ones — do not copy the old values into company infrastructure:
+All of these are **personal-account credentials** currently in the local `.env`.
+Create new company-owned credentials and revoke the old ones — do not copy the
+existing values into company infrastructure:
 
-- [ ] **Neon database password** — obsolete once Supabase migration completes; pause the Neon project
-- [ ] **Gemini API key** — create under company Google Cloud, revoke personal key
-- [ ] **Groq API key** — create under company account, revoke personal key
-- [ ] **Cloudinary** cloud/key/secret — company Cloudinary account (or re-upload assets)
-- [ ] **JWT_SECRET / JWT_REFRESH_SECRET** — generate fresh (`openssl rand -base64 48`); this logs out all existing sessions, which is fine at cutover
+- [ ] **Neon database password** — obsolete after the Supabase move; pause the project
+- [ ] **Gemini API key** — recreate under company Google Cloud
+- [ ] **Groq API key** — recreate under company account
+- [ ] **Cloudinary** cloud name / key / secret — company account
+- [ ] **JWT_SECRET / JWT_REFRESH_SECRET** — `openssl rand -base64 48`; this logs out existing sessions, which is fine at cutover
 - [ ] Google Maps browser key — restrict to the production domain
 
 ---
 
-## 5b. Deploy-blockers already fixed in this branch
+## 6. Verification
 
-These were found by testing the repo under production conditions, not just
-locally. Listed so nobody reintroduces them:
+CI (`.github/workflows/ci.yml`) runs on every push: Prisma validate, lint, and
+a full `next build` (which type-checks the UI, `server/`, and the bridge).
 
-| Issue | Why it broke on Vercel | Fix |
-|---|---|---|
-| `binaryTargets` had no Linux x64 target | Vercel's runtime is Linux x64/OpenSSL 3. Prisma would throw *"could not locate the Query Engine for runtime rhel-openssl-3.0.x"* on the first query — build passes, every request 500s | Added `rhel-openssl-3.0.x` (+ musl targets for the Alpine Dockerfiles) |
-| 29 files imported via `@/` aliases | Vercel resolves imports at build time; the runtime `tsconfig-paths` shim cannot help a bundler | Converted all 57 imports to relative paths; shim removed |
-| `/api/health` required Redis | Vercel has no Redis, so a perfectly healthy deploy reported HTTP 500 — uptime monitors and Vercel health checks would flag it permanently | Only the database is fatal now; no Redis reports `200 degraded`. `/api/ready` no longer checks Redis either |
-| Root `package.json` faked a Next.js app | Made Vercel run `next build` at the repo root against a package with no app — the 2-second "up to date" build in the original logs | Deleted; Services config points at the real app dirs |
-| `db:seed` pointed at a missing file | `prisma/seed.ts` did not exist, so seeding a fresh company database would fail immediately | Real seed moved from `scratch/seed_production.ts` to `prisma/seed.ts` |
-| No Node version floor | Company builds could silently use a different major than CI/Docker | `"engines": { "node": ">=20" }` in both packages |
+Verified locally on 2026-08-16 against this branch:
 
-## 6. Pre-flight verification (already automated in CI)
+- `npm run build` → exit 0, 34 UI routes + `ƒ /api/[...slug]`
+- Live requests through the bridge against the real database:
+  - `/api/v1/version` → 200 JSON
+  - `/api/health` → 200 `database: connected`
+  - `/api/v1/services` → 200 with real rows from Postgres
+  - `POST /api/v1/auth/login` → 401 `Invalid credentials` (body parsing + bcrypt + DB all exercised)
+  - `/api/v1/users/me` without a token → 401
+  - unknown `/api/v1/*` path → 404 **JSON** from Express, not Next's HTML page
+- Response headers pass through intact: helmet CSP, CORS, `ratelimit-*`
+  (confirming `req.ip` resolves correctly behind the proxy)
 
-`.github/workflows/ci.yml` runs on every push: Prisma validate, backend lint +
-`tsc` build, frontend lint + `next build`, and Docker image builds. It is fully
-account-agnostic and transfers with the repo.
+## 7. Removed during consolidation
 
-Local equivalents:
-
-```bash
-cd backend  && npm run build     # prisma generate + tsc
-cd frontend && npm run build     # next build
-```
-
-Verified on 2026-08-15 against this branch:
-
-- backend `npm run build` → exit 0; `dist/server.js` exports a valid Express app
-  and skips `listen()` when `VERCEL=1`
-- frontend `npm run build` → exit 0 with **no** `NEXT_PUBLIC_*` set (the
-  production case), 34 routes generated
-- `/api/health`, `/api/ready`, `/api/v1/version` all return correct status codes
-  against a live process
-- `prisma generate` emits `libquery_engine-rhel-openssl-3.0.x.so.node`
-- `prisma/seed.ts` typechecks
-
----
-
-## 7. Repo hygiene notes
-
-- Root `.env` (untracked, iCloud-evicted, unreadable) is **stale** — the live
-  configs are `backend/.env` and `frontend/.env.local`. If its contents are ever
-  needed, recover via iCloud Drive; otherwise it can be deleted safely.
-- `shared/` is referenced by nothing (vestigial types package) — candidate for
-  removal in a future cleanup.
-- `docker/`, `docker-compose*.yml`, `nginx.conf` support the self-hosted path
-  and are unused by the Vercel deployment.
+- `docker-compose.yml`, `docker-compose.prod.yml`, `nginx.conf`, `docker/` —
+  these built separate `./frontend` and `./backend` images, which no longer
+  exist. Re-add a single root `Dockerfile` if container deploys are needed.
+- `shared/` — a types package imported by nothing.
+- `server/server.ts` — the standalone Express bootstrap; Next.js is the server now.
+- `scratch/` is kept but excluded from the build (ad-hoc debug scripts).

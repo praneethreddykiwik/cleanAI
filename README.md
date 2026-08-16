@@ -37,67 +37,55 @@ Customer Pays & Reviews
 
 ## 🏗️ Project Structure
 
+A **single Next.js application** — the UI and the API run in one process.
+
 ```
-clean-ai/
-├── frontend/          # Next.js 15 App (Customer, Vendor, Admin portals)
-├── backend/           # Express.js API with Prisma
-├── shared/            # Shared TypeScript types
-├── docs/              # Documentation
-├── docker/            # Docker configurations
-├── scripts/           # Utility scripts
-├── docker-compose.yml
+cleanAI/
+├── app/               # UI routes (Customer, Vendor, Admin portals)
+│   └── api/[...slug]/ # every /api/* request enters here
+├── server/            # the Express API — routes, services, middleware
+│   ├── app.ts         # createApp(): all 81 endpoints
+│   └── http-bridge.ts # runs Express inside a Next.js Route Handler
+├── prisma/            # schema + seed
+├── components/ lib/ hooks/ contexts/ services/   # UI code
+├── docs/              # documentation
 ├── .env.example
 └── README.md
 ```
+
+The API is *mounted*, not rewritten: Express receives the original path
+(`/api/v1/bookings`), so every route, middleware, and error handler behaves
+exactly as it did when it ran as a standalone server.
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - Node.js 20+
-- PostgreSQL 16+
-- Docker & Docker Compose (recommended)
-
-### Option 1: Docker (Recommended)
+- A PostgreSQL database (Supabase, or local Postgres 16+)
 
 ```bash
 # Clone the repository
 git clone https://github.com/<org>/cleanAI.git
 cd cleanAI
 
-# Copy environment variables (there is no root .env — each app has its own)
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env.local
-# Edit both with your values
-
-# Start all services
-docker-compose up -d
-
-# The app will be available at:
-# Frontend: http://localhost:3000
-# Backend API: http://localhost:4000/api/v1
-```
-
-### Option 2: Manual Setup
-
-```bash
-# 1. Setup Database
-# Make sure PostgreSQL is running locally
-
-# 2. Backend Setup
-cd backend
-cp .env.example .env          # set DATABASE_URL + DIRECT_URL first
-npm install
-npm run db:push               # this project uses db push, not migrations
-npm run db:seed               # optional: baseline services, vendors, agents
-npm run dev                   # http://localhost:4000
-
-# 3. Frontend Setup (new terminal)
-cd frontend
+# Configure — one file for the whole app
 cp .env.example .env.local
+# Set DATABASE_URL, DIRECT_URL, JWT_SECRET, JWT_REFRESH_SECRET,
+# and one of GEMINI_API_KEY / GROQ_API_KEY
+
 npm install
-npm run dev                   # http://localhost:3000
+npm run db:push     # create the tables (this project uses db push, not migrations)
+npm run db:seed     # optional: baseline services, vendors, agents
+
+npm run dev         # UI + API together on http://localhost:3000
 ```
+
+Check it came up: <http://localhost:3000/api/health> should report
+`"database":"connected"`.
+
+> **Note:** Socket.IO and BullMQ workers need a long-running server and do not
+> run on Vercel. See [docs/COMPANY_TRANSFER.md](docs/COMPANY_TRANSFER.md).
 
 > **Deploying or handing this repo over?** See
 > [docs/COMPANY_TRANSFER.md](docs/COMPANY_TRANSFER.md) for the Vercel setup,

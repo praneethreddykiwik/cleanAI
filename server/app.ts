@@ -1,7 +1,6 @@
 import express, { Application } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 import 'express-async-errors';
@@ -28,6 +27,10 @@ import { paymentsRoutes } from './modules/payments/payments.routes';
 
 export function createApp(): Application {
   const app = express();
+
+  // Requests arrive through Next.js behind Vercel's proxy, so the client IP
+  // lives in X-Forwarded-For. Rate limiting and logging depend on req.ip.
+  app.set('trust proxy', true);
 
   // ==================
   // Security Middleware
@@ -67,7 +70,9 @@ export function createApp(): Application {
   // ==================
   // General Middleware
   // ==================
-  app.use(compression());
+  // NOTE: no compression() here — Next.js and Vercel already compress
+  // responses. Compressing inside the Express layer too would set a second
+  // Content-Encoding and produce an unreadable body.
   app.use(cookieParser());
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
