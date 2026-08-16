@@ -38,32 +38,62 @@ const envSchema = z.object({
   FIREBASE_PRIVATE_KEY: z.string().optional(),
 });
 
-const parsed = envSchema.safeParse(process.env);
+type Env = z.infer<typeof envSchema>;
 
-if (!parsed.success) {
-  const details = parsed.error.issues
-    .map((issue) => `  - ${issue.path.join('.') || '(root)'}: ${issue.message}`)
-    .join('\n');
-  console.error(`❌ Invalid environment variables:\n${details}`);
-  throw new Error('Invalid environment variables — see the list above.');
-}
+let cached: Env | undefined;
 
-// Strict production check — only truly fatal vars
-if (process.env.NODE_ENV === 'production') {
-  const missing: string[] = [];
+/**
+ * Validation runs on FIRST ACCESS, not on import.
+ *
+ * `next build` evaluates server modules while collecting page data, long
+ * before any request — and on a build machine the real secrets are absent by
+ * design. Validating at import time would therefore fail every deployment
+ * build. Reading a value (which only happens while serving a request) is the
+ * correct moment to demand that the environment is complete.
+ */
+function loadEnv(): Env {
+  if (cached) return cached;
 
-  if (!process.env.DATABASE_URL) missing.push('DATABASE_URL');
-  if (!process.env.JWT_SECRET)   missing.push('JWT_SECRET');
-  if (!process.env.JWT_REFRESH_SECRET) missing.push('JWT_REFRESH_SECRET');
+  const parsed = envSchema.safeParse(process.env);
 
-  // At least one AI provider key is required in production
-  if (!process.env.GEMINI_API_KEY && !process.env.GROQ_API_KEY) {
-    missing.push('GEMINI_API_KEY or GROQ_API_KEY (at least one required)');
+  if (!parsed.success) {
+    const details = parsed.error.issues
+      .map((issue) => `  - ${issue.path.join('.') || '(root)'}: ${issue.message}`)
+      .join('\n');
+    console.error(`❌ Invalid environment variables:\n${details}`);
+    throw new Error('Invalid environment variables — see the list above.');
   }
 
-  if (missing.length > 0) {
-    throw new Error(`PRODUCTION STARTUP BLOCKED — missing critical env vars: ${missing.join(', ')}`);
+  // Strict production check — only truly fatal vars
+  if (parsed.data.NODE_ENV === 'production') {
+    const missing: string[] = [];
+
+    if (!process.env.DATABASE_URL) missing.push('DATABASE_URL');
+    if (!process.env.JWT_SECRET)   missing.push('JWT_SECRET');
+    if (!process.env.JWT_REFRESH_SECRET) missing.push('JWT_REFRESH_SECRET');
+
+    // At least one AI provider key is required in production
+    if (!process.env.GEMINI_API_KEY && !process.env.GROQ_API_KEY) {
+      missing.push('GEMINI_API_KEY or GROQ_API_KEY (at least one required)');
+    }
+
+    if (missing.length > 0) {
+      throw new Error(`PRODUCTION STARTUP BLOCKED — missing critical env vars: ${missing.join(', ')}`);
+    }
   }
+
+  cached = parsed.data;
+  return cached;
 }
 
-export const env = parsed.data;
+/**
+ * Behaves like a plain object (`env.JWT_SECRET`), but each read resolves
+ * through the lazy loader above, so importing this module has no side effects.
+ */
+export const env: Env = new Proxy({} as Env, {
+  get: (_target, prop: string | symbol) => loadEnv()[prop as keyof Env],
+  has: (_target, prop) => prop in loadEnv(),
+  ownKeys: () => Reflect.ownKeys(loadEnv()),
+  getOwnPropertyDescriptor: (_target, prop) =>
+    Object.getOwnPropertyDescriptor(loadEnv(), prop),
+});
