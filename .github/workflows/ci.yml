@@ -7,33 +7,8 @@ on:
     branches: [ main, dev ]
 
 jobs:
-  validate-and-test:
+  validate-and-build:
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: cleanai
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     steps:
       - name: Checkout Repository
@@ -45,44 +20,23 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      # --- Validate & Test Backend ---
-      - name: Install Backend Dependencies
-        run: npm ci --legacy-peer-deps
-        working-directory: ./backend
+      - name: Install Dependencies
+        run: npm ci
 
       - name: Validate Prisma Schema
         run: npx prisma validate
-        working-directory: ./backend
 
-      - name: Run Backend Linter Audit
+      - name: Lint
         run: npm run lint
-        working-directory: ./backend
 
-      - name: Compile Backend TypeScript (tsc)
+      # `next build` type-checks the whole app — UI, the Express API under
+      # server/, and the bridge in app/api — in a single pass.
+      - name: Build (Next.js app + API)
         run: npm run build
-        working-directory: ./backend
-
-      # --- Validate & Test Frontend ---
-      - name: Install Frontend Dependencies
-        run: npm ci --legacy-peer-deps
-        working-directory: ./frontend
-
-      - name: Run Frontend Linter Audit
-        run: npm run lint
-        working-directory: ./frontend
-
-      - name: Compile Frontend Next.js Production Build
-        run: npm run build
-        working-directory: ./frontend
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:4000/api/v1
-          NEXT_PUBLIC_SOCKET_URL: http://localhost:4000
-          NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: mock-maps-key
+          # Build-time only: the schema requires these to parse, but no
+          # database connection is opened during a build.
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cleanai
+          JWT_SECRET: ci_placeholder_secret_at_least_32_characters_long
+          JWT_REFRESH_SECRET: ci_placeholder_refresh_secret_32_characters_long
           NEXT_TELEMETRY_DISABLED: 1
-
-      # --- Validate Docker Stack Build ---
-      - name: Build Backend Docker Image
-        run: docker build -t cleanai-backend:latest ./backend
-
-      - name: Build Frontend Docker Image
-        run: docker build -t cleanai-frontend:latest ./frontend

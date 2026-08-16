@@ -1,6 +1,6 @@
-import { prisma } from '../src/database';
-import { redisService } from '../src/config/redis';
-import { env } from '../src/config/env';
+import { prisma } from '../server/database';
+import { redisService } from '../server/config/redis';
+import { env } from '../server/config/env';
 import { v2 as cloudinary } from 'cloudinary';
 
 async function runProductionCheck() {
