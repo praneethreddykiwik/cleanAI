@@ -57,11 +57,14 @@ function loadEnv(): Env {
   const parsed = envSchema.safeParse(process.env);
 
   if (!parsed.success) {
+    // Name the offending variables in the Error itself. This message travels
+    // back in the HTTP response, so whoever is configuring the deployment can
+    // see what is missing without going digging through platform logs.
     const details = parsed.error.issues
-      .map((issue) => `  - ${issue.path.join('.') || '(root)'}: ${issue.message}`)
-      .join('\n');
-    console.error(`❌ Invalid environment variables:\n${details}`);
-    throw new Error('Invalid environment variables — see the list above.');
+      .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+      .join('; ');
+    console.error(`❌ Invalid environment variables: ${details}`);
+    throw new Error(`Invalid environment variables — ${details}`);
   }
 
   // Strict production check — only truly fatal vars
@@ -78,7 +81,7 @@ function loadEnv(): Env {
     }
 
     if (missing.length > 0) {
-      throw new Error(`PRODUCTION STARTUP BLOCKED — missing critical env vars: ${missing.join(', ')}`);
+      throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
     }
   }
 

@@ -1,4 +1,5 @@
 import { APP_CONFIG } from './config';
+import { readJson } from './read-json';
 
 export async function apiCall(endpoint: string, options: RequestInit = {}) {
   const API_BASE_URL = APP_CONFIG.apiUrl;
@@ -41,7 +42,7 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
     // We can let the calling hook handle redirect or toast
   }
 
-  const data = await res.json();
+  const data = await readJson<any>(res);
   if (!res.ok) {
     throw new Error(data.message || `Request failed with status ${res.status}`);
   }

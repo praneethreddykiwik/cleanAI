@@ -1,3 +1,5 @@
+import { readJson } from './read-json';
+
 export interface GeocodedAddress {
   address: string;
   latitude: number;
@@ -27,7 +29,7 @@ export const LocationService = {
       });
 
       if (!res.ok) throw new Error('Nominatim search failed');
-      const data = await res.json();
+      const data = await readJson<any>(res);
 
       return data.map((item: any) => {
         const addr = item.address || {};
@@ -67,7 +69,7 @@ export const LocationService = {
       });
 
       if (!res.ok) throw new Error('Nominatim reverse geocoding failed');
-      const data = await res.json();
+      const data = await readJson<any>(res);
       if (!data || !data.display_name) return null;
 
       const addr = data.address || {};

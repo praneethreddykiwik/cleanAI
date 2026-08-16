@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation';
 import type { User, LoginRequest, RegisterRequest, AuthTokens } from '@/types';
 import { toast } from 'sonner';
 import { APP_CONFIG } from '@/lib/config';
+import { readJson } from '@/lib/read-json';
 
 interface AuthContextType {
   user: User | null;
@@ -51,7 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           Authorization: `Bearer ${accessToken}`,
         },
       });
-      const data = await res.json();
+      const data = await readJson<any>(res);
       if (res.ok && data.success) {
         return data.data;
       }
@@ -69,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken }),
       });
-      const data = await res.json();
+      const data = await readJson<any>(res);
       if (res.ok && data.success) {
         return data.data.accessToken;
       }
@@ -133,7 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(credentials),
         });
-        const data = await res.json();
+        const data = await readJson<any>(res);
 
         if (!res.ok || !data.success) {
           throw new Error(data.message || 'Login failed');
@@ -179,7 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
         });
-        const data = await res.json();
+        const data = await readJson<any>(res);
 
         if (!res.ok || !data.success) {
           throw new Error(data.message || 'Registration failed');
