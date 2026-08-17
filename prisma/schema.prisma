@@ -182,11 +182,31 @@ model Service {
   updatedAt      DateTime        @updatedAt
   bookings       Booking[]
   vendorServices VendorService[]
+  pricingTiers   ServicePricingTier[]
 
   @@index([slug])
   @@index([category])
   @@index([isActive])
   @@map("services")
+}
+
+/// Per-service price for each AI dirtiness level (1–5 stars).
+/// The vision agent rates how dirty a job is; that star rating selects the row
+/// here, so a 5-star job costs more than a 1-star one. Admins edit these values
+/// per service, which is why they live in the database rather than in code.
+model ServicePricingTier {
+  id        String   @id @default(uuid())
+  serviceId String
+  level     Int // 1 = lightest .. 5 = filthiest
+  label     String
+  price     Float
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  service   Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, level])
+  @@index([serviceId])
+  @@map("service_pricing_tiers")
 }
 
 model VendorService {

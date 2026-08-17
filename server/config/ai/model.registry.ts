@@ -66,6 +66,15 @@ export type ConfidenceGatingStatus =
   | 'NEED_DIFFERENT_ANGLES' // 0.50 - 0.74
   | 'ESCALATE_TO_MANUAL_REVIEW'; // < 0.50
 
+/**
+ * Groq retired every Llama vision model; `llama-3.2-11b-vision-preview` now
+ * returns 400 model_decommissioned. Verified against the live /models endpoint
+ * for this account: qwen3.6-27b is the only remaining image-capable model
+ * (gpt-oss and compound are text-only). Gemini stays as the failover provider.
+ */
+const GROQ_VISION_MODEL = 'qwen/qwen3.6-27b';
+const GROQ_TEXT_MODEL = 'openai/gpt-oss-120b';
+
 export interface JobComplexityResult {
   service: string;
   subcategory?: string;
@@ -108,6 +117,16 @@ function parseAndValidateJobResult(text: string): JobComplexityResult {
   }
 
   let cleaned = text.trim();
+
+  // Reasoning models (qwen3.6) emit a <think>...</think> preamble before the
+  // answer. Left in place it defeats JSON.parse and the brace-matching
+  // fallback, since the reasoning itself often contains braces.
+  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  // An unterminated block means the model hit max_tokens mid-thought.
+  if (cleaned.startsWith('<think>')) {
+    throw new Error('AI response was cut off during reasoning; no JSON produced');
+  }
+
   if (cleaned.startsWith('```')) {
     cleaned = cleaned.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
   }
@@ -266,7 +285,7 @@ class GroqModelProvider implements ModelProvider {
   }
 
   async analyzeImage(imageBase64: string): Promise<JobComplexityResult> {
-    logger.info('[Groq] Calling Llama-3.2-Vision with full JobComplexityResult prompt...');
+    logger.info(`[Groq] Calling ${GROQ_VISION_MODEL} with full JobComplexityResult prompt...`);
 
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -275,7 +294,7 @@ class GroqModelProvider implements ModelProvider {
         'Authorization': `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
-        model: 'llama-3.2-11b-vision-preview',
+        model: GROQ_VISION_MODEL,
         messages: [{
           role: 'user',
           content: [
@@ -310,7 +329,7 @@ class GroqModelProvider implements ModelProvider {
         'Authorization': `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: GROQ_TEXT_MODEL,
         messages: [{ role: 'user', content: prompt }],
       }),
     });
@@ -439,22 +458,44 @@ export class ModelRegistry {
     GROQ: new GroqModelProvider(),
   };
 
-  public static getActiveProviderName(): string {
-    if (process.env.GROQ_API_KEY)   return 'GROQ';
-    if (process.env.GEMINI_API_KEY) return 'GEMINI';
-    return 'GEMINI';
+  public static getActiveProviderName(isVision = false): string {
+    return this.getProviderChain(isVision)[0] ?? 'SIMULATION';
   }
 
   public static isConfigured(): boolean {
     return true;
   }
 
-  public static getProvider(): ModelProvider {
-    const hasKey = !!(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY);
-    if (!hasKey) {
+  /**
+   * Providers to try, in order, for this kind of request.
+   *
+   * Vision prefers Gemini. Groq's only remaining image-capable model
+   * (qwen3.6-27b) allows 8000 tokens per minute on the free tier while a single
+   * photo costs ~4200, so image analysis there fails with 429 after roughly one
+   * request a minute. Gemini 2.5 Flash is multimodal with far more headroom.
+   * Text generation still prefers Groq, which is fast and cheap for that.
+   *
+   * Whatever is not first becomes the fallback, so one provider being rate
+   * limited or down no longer fails the request.
+   */
+  public static getProviderChain(isVision = false): string[] {
+    const groq = !!process.env.GROQ_API_KEY;
+    const gemini = !!process.env.GEMINI_API_KEY;
+
+    const order = isVision ? ['GEMINI', 'GROQ'] : ['GROQ', 'GEMINI'];
+    return order.filter((name) => (name === 'GROQ' ? groq : gemini));
+  }
+
+  /** A specific provider by name, or the best available when unnamed. */
+  public static getProvider(name?: string): ModelProvider {
+    if (name && this.providers[name]) {
+      return this.providers[name];
+    }
+
+    const chain = this.getProviderChain();
+    if (chain.length === 0) {
       return new SimulationModelProvider();
     }
-    const name = process.env.GROQ_API_KEY ? 'GROQ' : 'GEMINI';
-    return this.providers[name];
+    return this.providers[chain[0]];
   }
 }

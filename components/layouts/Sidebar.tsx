@@ -23,6 +23,7 @@ import {
   Home,
   Wrench,
   type LucideIcon,
+  IndianRupee,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
@@ -75,6 +76,7 @@ const ADMIN_NAV: SidebarNavItem[] = [
   { label: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
   { label: 'Reports', href: '/admin/reports', icon: BookOpen },
   { label: 'Support', href: '/admin/support', icon: Headphones },
+  { label: 'Pricing', href: '/admin/pricing', icon: IndianRupee },
   { label: 'Settings', href: '/admin/settings', icon: Settings },
 ];
 

@@ -403,3 +403,119 @@ adminRoutes.patch('/support-tickets/:id/resolve', authMiddleware as any, authori
     res.status(500).json({ success: false, message: error.message || 'Failed to resolve ticket' });
   }
 });
+
+// ============================================================================
+// Dirtiness-tier pricing
+// ----------------------------------------------------------------------------
+// The vision agent rates each job 1–5 stars for how dirty it is. That rating
+// selects a per-service price from here, so a 5-star job is quoted higher than
+// a 1-star one. These live in the database (not code) so admins can retune
+// pricing per service without a deploy.
+// ============================================================================
+
+const TIER_LABELS: Record<number, string> = {
+  1: 'Light',
+  2: 'Mild',
+  3: 'Moderate',
+  4: 'Heavy',
+  5: 'Extreme',
+};
+
+// Multipliers used only to seed a sensible starting ladder for a service that
+// has never been configured. Admins overwrite these immediately.
+const DEFAULT_TIER_MULTIPLIERS: Record<number, number> = {
+  1: 0.6,
+  2: 0.8,
+  3: 1.0,
+  4: 1.35,
+  5: 1.75,
+};
+
+/** All services with their five pricing tiers, creating defaults on first read. */
+adminRoutes.get('/pricing-tiers', authMiddleware as any, authorizeRoles('ADMIN') as any, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const services = await prisma.service.findMany({
+      orderBy: { sortOrder: 'asc' },
+      include: { pricingTiers: { orderBy: { level: 'asc' } } },
+    });
+
+    // Backfill any service that has no tiers yet, so the admin screen always
+    // shows five editable rows instead of an empty state.
+    const needsSeed = services.filter((s) => s.pricingTiers.length === 0);
+    if (needsSeed.length > 0) {
+      await prisma.servicePricingTier.createMany({
+        data: needsSeed.flatMap((s) =>
+          [1, 2, 3, 4, 5].map((level) => ({
+            serviceId: s.id,
+            level,
+            label: TIER_LABELS[level],
+            price: Math.round((s.basePrice || 499) * DEFAULT_TIER_MULTIPLIERS[level]),
+          }))
+        ),
+        skipDuplicates: true,
+      });
+
+      const refreshed = await prisma.service.findMany({
+        orderBy: { sortOrder: 'asc' },
+        include: { pricingTiers: { orderBy: { level: 'asc' } } },
+      });
+      return res.status(200).json({ success: true, data: refreshed });
+    }
+
+    res.status(200).json({ success: true, data: services });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to load pricing tiers' });
+  }
+});
+
+/** Replace the five tier prices for one service. */
+adminRoutes.put('/pricing-tiers/:serviceId', authMiddleware as any, authorizeRoles('ADMIN') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { serviceId } = req.params;
+    const { tiers } = req.body as { tiers?: Array<{ level: number; price: number; label?: string }> };
+
+    if (!Array.isArray(tiers) || tiers.length === 0) {
+      return res.status(400).json({ success: false, message: 'tiers must be a non-empty array' });
+    }
+
+    for (const t of tiers) {
+      const level = Number(t.level);
+      const price = Number(t.price);
+      if (!Number.isInteger(level) || level < 1 || level > 5) {
+        return res.status(400).json({ success: false, message: 'Each tier level must be an integer between 1 and 5' });
+      }
+      if (!Number.isFinite(price) || price < 0) {
+        return res.status(400).json({ success: false, message: 'Each tier price must be zero or greater' });
+      }
+    }
+
+    const service = await prisma.service.findUnique({ where: { id: serviceId } });
+    if (!service) {
+      return res.status(404).json({ success: false, message: 'Service not found' });
+    }
+
+    await prisma.$transaction(
+      tiers.map((t) =>
+        prisma.servicePricingTier.upsert({
+          where: { serviceId_level: { serviceId, level: Number(t.level) } },
+          update: { price: Number(t.price), label: t.label || TIER_LABELS[Number(t.level)] },
+          create: {
+            serviceId,
+            level: Number(t.level),
+            price: Number(t.price),
+            label: t.label || TIER_LABELS[Number(t.level)],
+          },
+        })
+      )
+    );
+
+    const updated = await prisma.servicePricingTier.findMany({
+      where: { serviceId },
+      orderBy: { level: 'asc' },
+    });
+
+    res.status(200).json({ success: true, message: 'Pricing tiers updated', data: updated });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to update pricing tiers' });
+  }
+});

@@ -12,7 +12,15 @@ export const aiRoutes = Router();
  */
 aiRoutes.post('/analyze-job', authMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { image, description, serviceName, isWeekend = false, city = 'Bengaluru' } = req.body;
+    const {
+      image,
+      description,
+      serviceName,
+      isWeekend = false,
+      city = 'Bengaluru',
+      distanceKm,
+      isNightBooking = false,
+    } = req.body;
 
     if (!description) {
       return res.status(400).json({ success: false, message: 'Please provide a job description.' });
@@ -34,14 +42,28 @@ aiRoutes.post('/analyze-job', authMiddleware as any, async (req: AuthenticatedRe
     const complexity = await AgentsService.analyzeJobComplexity(image || null, description, serviceName);
 
     // 2. Run deterministic Pricing Engine
-    const priceBreakdown = await AgentsService.calculatePriceEstimate(complexity, isWeekend, city);
+    // distanceKm is the agent-to-customer travel distance and drives the travel
+    // fee. It was previously dropped here, so every quote silently used the
+    // 3.2 km default and travel was always billed as free no matter how far the
+    // job actually was.
+    const parsedDistance = Number(distanceKm);
+    const travelDistanceKm =
+      Number.isFinite(parsedDistance) && parsedDistance >= 0 ? parsedDistance : undefined;
+
+    const priceBreakdown = await AgentsService.calculatePriceEstimate(
+      complexity,
+      isWeekend,
+      city,
+      travelDistanceKm,
+      Boolean(isNightBooking)
+    );
 
     res.status(200).json({
       success: true,
       data: {
         complexity,
         priceBreakdown,
-        aiProvider: ModelRegistry.getActiveProviderName(),
+        aiProvider: ModelRegistry.getActiveProviderName(!!image),
         mode: 'live',
       },
     });
@@ -261,7 +283,7 @@ aiRoutes.get('/debug', authMiddleware as any, async (req: AuthenticatedRequest, 
     success: true,
     data: {
       provider: providerName,
-      model: providerName === 'GROQ' ? 'llama-3.2-11b-vision-preview / llama-3.3-70b-versatile' : 'gemini-2.5-flash',
+      model: providerName === 'GROQ' ? 'qwen/qwen3.6-27b' : 'gemini-2.5-flash',
       visionEnabled: true,
       geminiConfigured,
       groqConfigured,

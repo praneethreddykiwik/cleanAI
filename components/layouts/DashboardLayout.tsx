@@ -18,6 +18,7 @@ import {
   Settings,
   Users,
   Briefcase,
+  IndianRupee,
 } from 'lucide-react';
 
 interface DashboardLayoutProps {
@@ -79,7 +80,8 @@ export function DashboardLayout({
       { label: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
       { label: 'Users', href: '/admin/users', icon: Users },
       { label: 'Bookings', href: '/admin/bookings', icon: Calendar },
-      { label: 'Settings', href: '/admin/settings', icon: Settings },
+      { label: 'Pricing', href: '/admin/pricing', icon: IndianRupee },
+  { label: 'Settings', href: '/admin/settings', icon: Settings },
     ],
   }[role];
 

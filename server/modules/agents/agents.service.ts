@@ -33,6 +33,12 @@ export interface PriceEstimationBreakdown {
   severityFee?: number;
   areaMultiplier?: number;
   holidayCharge?: number;
+  /** 1–5 star dirtiness rating from the vision agent, which selects the tier. */
+  dirtinessLevel?: number;
+  dirtinessLabel?: string;
+  /** The admin-configured tier price used, or null when none is set yet. */
+  tierPriceApplied?: number | null;
+  distanceKm?: number;
 }
 
 // Default configurable base price map if service record missing from DB
@@ -197,8 +203,11 @@ export class AgentsService {
   ): Promise<JobComplexityResult> {
     const startTime = process.hrtime.bigint();
     const promptVersion = 'v2.5.0';
-    const providerName = ModelRegistry.getActiveProviderName();
-    const model = providerName === 'GROQ' ? 'llama-3.2-11b-vision-preview' : 'gemini-2.5-flash';
+    // Reported for logging only; the actual provider is chosen per attempt below
+    // and may differ if the first one is rate limited.
+    const hasImage = Array.isArray(imageInput) ? imageInput.length > 0 : !!imageInput;
+    const providerName = ModelRegistry.getActiveProviderName(hasImage);
+    const model = providerName === 'GROQ' ? 'qwen/qwen3.6-27b' : 'gemini-2.5-flash';
 
     // Normalize image input array
     const imageList: string[] = Array.isArray(imageInput)
@@ -304,15 +313,28 @@ export class AgentsService {
     // The provider is determined by ModelRegistry (GROQ if key set, else GEMINI).
     // ModelRegistry throws if no key is configured — caught below.
 
+    // Try each configured provider in turn, twice each. Previously this called
+    // getProvider() with no argument, which always returned the same provider,
+    // so a rate-limited or failing provider was simply retried into the same
+    // wall instead of falling back to the other one.
+    const providerChain = ModelRegistry.getProviderChain(!!imageBufferBase64);
+    const ATTEMPTS_PER_PROVIDER = 2;
+    const plan = providerChain.flatMap((name) =>
+      Array.from({ length: ATTEMPTS_PER_PROVIDER }, () => name)
+    );
+    const maxAttempts = plan.length || 1;
+
     let attempts = 0;
-    const maxAttempts = 2;
     let finalResult: JobComplexityResult | null = null;
     let lastError: Error | null = null;
+    let usedProvider = providerChain[0] || 'SIMULATION';
 
     while (attempts < maxAttempts) {
+      const providerName = plan[attempts] || usedProvider;
       attempts++;
+      usedProvider = providerName;
       try {
-        const provider = ModelRegistry.getProvider();
+        const provider = ModelRegistry.getProvider(providerName);
         let result: JobComplexityResult;
 
         if (imageBufferBase64) {
@@ -357,12 +379,12 @@ Inferred service category hint (override if your analysis disagrees): "${inferre
         message: `AI analysis failed after ${maxAttempts} attempts. Last error: ${lastError?.message}`,
         visionLatencyMs: durationMs,
         totalLatencyMs: durationMs,
-        metadata: { imageHash, attempts, provider: providerName }
+        metadata: { imageHash, attempts, providersTried: providerChain }
       });
       // Throw with the root cause — never silently fall back to simulation
       throw new Error(
         `AI analysis failed after ${maxAttempts} attempts. ` +
-        `Provider: ${providerName}. ` +
+        `Providers tried: ${providerChain.join(' -> ') || 'none'}. ` +
         `Last error: ${lastError?.message || 'Unknown error'}`
       );
     }
@@ -614,7 +636,7 @@ Inferred service category hint (override if your analysis disagrees): "${inferre
     complexity: JobComplexityResult,
     isWeekend: boolean = false,
     city: string = 'Bengaluru',
-    distanceKm: number = 3.2,
+    distanceKm: number | undefined = undefined,
     isNightBooking: boolean = false
   ): Promise<PriceEstimationBreakdown> {
     const startTime = process.hrtime.bigint();
@@ -629,6 +651,13 @@ Inferred service category hint (override if your analysis disagrees): "${inferre
       throw new Error('Pricing calculation failed: complexity payload is null');
     }
 
+    // Callers that genuinely do not know the distance yet (e.g. a quote before
+    // an address is chosen) fall back to a nominal in-radius trip. Callers that
+    // DO know it must pass it, or travel is under-billed.
+    const effectiveDistanceKm = typeof distanceKm === 'number' && Number.isFinite(distanceKm)
+      ? distanceKm
+      : 3.2;
+
     const serviceName = complexity.service || 'Deep Cleaning';
 
     // 1. Service-specific Base Price from Database (or Fallback Default)
@@ -642,7 +671,6 @@ Inferred service category hint (override if your analysis disagrees): "${inferre
     });
 
     const fallbackPrice = DEFAULT_SERVICE_BASE_PRICES[serviceName] || 499;
-    const basePrice = serviceRecord ? serviceRecord.basePrice : fallbackPrice;
 
     // Calculate WCI Index & Confidence Gating
     const wciCalc = this.calculateWorkComplexityIndex(complexity);
@@ -656,6 +684,26 @@ Inferred service category hint (override if your analysis disagrees): "${inferre
     complexity.requiresBidding = wciCalc.requiresBidding;
     complexity.confidenceGating = gating.status;
     complexity.confidenceMessage = gating.message;
+
+    // 1b. Dirtiness-tier base price.
+    // The vision agent rates the job 1–5 stars; that rating picks the admin-set
+    // price for this service, so a 5-star (filthy) job starts higher than a
+    // 1-star one. Admins edit these in the dashboard. Services with no tiers
+    // configured fall back to the flat basePrice, so nothing breaks before an
+    // admin fills them in.
+    let pricingTier: { level: number; label: string; price: number } | null = null;
+    if (serviceRecord) {
+      const tier = await prisma.servicePricingTier.findUnique({
+        where: { serviceId_level: { serviceId: serviceRecord.id, level: wciCalc.starRating } },
+      });
+      if (tier) pricingTier = { level: tier.level, label: tier.label, price: tier.price };
+    }
+
+    const basePrice = pricingTier
+      ? pricingTier.price
+      : serviceRecord
+        ? serviceRecord.basePrice
+        : fallbackPrice;
 
     // 2. WCI Multiplier (Small percentage adjustment: 0–25% based on complexity)
     const wciAdjustment = Math.round(basePrice * (wciCalc.wciScore / 100) * 0.25);
@@ -690,21 +738,21 @@ Inferred service category hint (override if your analysis disagrees): "${inferre
     // 7. Travel Cost (Free <= 5 km threshold!)
     let travelFee = 0;
     let travelExplanation = 'Free delivery within 5 km radius';
-    if (distanceKm <= 5) {
+    if (effectiveDistanceKm <= 5) {
       travelFee = 0;
       travelExplanation = 'Free delivery within 5 km threshold';
-    } else if (distanceKm <= 10) {
+    } else if (effectiveDistanceKm <= 10) {
       travelFee = 80;
-      travelExplanation = `₹80 travel fee (${distanceKm.toFixed(1)} km distance slab)`;
-    } else if (distanceKm <= 20) {
+      travelExplanation = `₹80 travel fee (${effectiveDistanceKm.toFixed(1)} km distance slab)`;
+    } else if (effectiveDistanceKm <= 20) {
       travelFee = 180;
-      travelExplanation = `₹180 travel fee (${distanceKm.toFixed(1)} km distance slab)`;
-    } else if (distanceKm <= 40) {
+      travelExplanation = `₹180 travel fee (${effectiveDistanceKm.toFixed(1)} km distance slab)`;
+    } else if (effectiveDistanceKm <= 40) {
       travelFee = 350;
-      travelExplanation = `₹350 travel fee (${distanceKm.toFixed(1)} km distance slab)`;
+      travelExplanation = `₹350 travel fee (${effectiveDistanceKm.toFixed(1)} km distance slab)`;
     } else {
       travelFee = 500;
-      travelExplanation = `₹500 travel fee (outstation ${distanceKm.toFixed(1)} km distance slab)`;
+      travelExplanation = `₹500 travel fee (outstation ${effectiveDistanceKm.toFixed(1)} km distance slab)`;
     }
 
     // 8. Emergency / Night Surcharge (Applied ONLY if explicitly booked for night slot 8 PM – 6 AM)
@@ -845,6 +893,10 @@ Inferred service category hint (override if your analysis disagrees): "${inferre
       totalMax: Math.round(grandTotal * 1.05),
       lineItems,
       severityFee: wciAdjustment,
+      dirtinessLevel: wciCalc.starRating,
+      dirtinessLabel: wciCalc.severityLabel,
+      tierPriceApplied: pricingTier?.price ?? null,
+      distanceKm: effectiveDistanceKm,
     };
   }
 
