@@ -54,7 +54,9 @@ function ResetPasswordContent() {
     try {
       const res = await apiCall('/auth/reset-password', {
         method: 'POST',
-        body: JSON.stringify({ token, password: data.password }),
+        // The route reads `newPassword` (auth.routes.ts), matching the sibling
+        // change-password endpoint. Sending `password` made every reset 400.
+        body: JSON.stringify({ token, newPassword: data.password }),
       });
       if (!res.success) throw new Error(res.message || 'Reset failed');
       setIsSuccess(true);

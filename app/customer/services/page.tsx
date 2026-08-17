@@ -303,15 +303,26 @@ export default function ServicesPage() {
       return;
     }
 
-    // Resolve service id
+    // Resolve the database service. Match on the catalog entry's OWN slug —
+    // it is the shared key between constants/index.ts and the seeded rows.
+    // This previously derived a slug from the display name
+    // ("Deep Home Cleaning" -> "deep-home-cleaning"), which only ever matched
+    // the two services whose card title happened to equal the DB name; the
+    // other fifteen could not be booked at all.
     const serviceName = selectedService?.name || '';
-    const matched = dbServices.find((s: any) =>
-      s.name.toLowerCase() === serviceName.toLowerCase() ||
-      s.slug.toLowerCase() === serviceName.toLowerCase().replace(/ /g, '-')
-    );
+    const serviceSlug = (selectedService?.slug || '').toLowerCase();
+    const matched = dbServices.find((s: any) => {
+      const dbSlug = (s.slug || '').toLowerCase();
+      const dbName = (s.name || '').toLowerCase();
+      return (
+        (serviceSlug && dbSlug === serviceSlug) ||
+        dbName === serviceName.toLowerCase() ||
+        dbSlug === serviceName.toLowerCase().replace(/ /g, '-')
+      );
+    });
 
     if (!matched) {
-      toast.error('Service is currently offline in DB database.');
+      toast.error(`"${serviceName}" is not available right now. Please pick another service.`);
       return;
     }
 

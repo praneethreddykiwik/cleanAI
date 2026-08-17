@@ -339,6 +339,13 @@ function BookingPageInner() {
           <div className="max-w-2xl mx-auto w-full">
             <AIChatInterface
               serviceName={serviceName}
+              serviceId={
+                services.find(
+                  (s: any) =>
+                    (s.slug || '').toLowerCase() === serviceName.toLowerCase().replace(/ /g, '-') ||
+                    (s.name || '').toLowerCase() === serviceName.toLowerCase()
+                )?.id
+              }
               addressId={selectedAddress}
               latitude={addresses.find((a: any) => a.id === selectedAddress)?.latitude}
               longitude={addresses.find((a: any) => a.id === selectedAddress)?.longitude}

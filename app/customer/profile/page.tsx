@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { containerVariants, cardVariants } from '@/lib/animations';
 import { toast } from 'sonner';
+import { apiCall } from '@/lib/api';
 
 export default function CustomerProfilePage() {
   const { user, updateUser } = useAuth();
@@ -46,6 +47,8 @@ export default function CustomerProfilePage() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [isSavingInfo, setIsSavingInfo] = useState(false);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   // Notifications State
   const [notifConfig, setNotifConfig] = useState({
@@ -55,22 +58,63 @@ export default function CustomerProfilePage() {
     pushOffers: true,
   });
 
-  const handleSaveInfo = (e: React.FormEvent) => {
+  // Persist to the API. This used to call updateUser() only, which mutates
+  // local React state — the change looked saved and then vanished on the next
+  // load, because AuthContext refetches /auth/me on mount.
+  const handleSaveInfo = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateUser({ firstName, lastName, email, phone });
-    toast.success('Personal information updated successfully.');
+    setIsSavingInfo(true);
+    try {
+      // PATCH /users/me accepts firstName, lastName, phone and avatar.
+      // Email is deliberately not updatable — it is the login identity.
+      const res = await apiCall('/users/me', {
+        method: 'PATCH',
+        body: JSON.stringify({ firstName, lastName, phone }),
+      });
+      updateUser(res.data ?? { firstName, lastName, phone });
+      toast.success('Personal information updated successfully.');
+    } catch (err) {
+      toast.error((err as Error).message || 'Could not update your profile.');
+    } finally {
+      setIsSavingInfo(false);
+    }
   };
 
-  const handleUpdatePassword = (e: React.FormEvent) => {
+  // This previously changed nothing at all: it cleared the inputs and showed
+  // "Password updated successfully" without issuing a single request, so the
+  // old password kept working while the customer believed it had changed.
+  const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
+
     if (newPassword !== confirmPassword) {
       toast.error("New passwords don't match.");
       return;
     }
-    setCurrentPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
-    toast.success('Password updated successfully.');
+    if (!currentPassword) {
+      toast.error('Enter your current password.');
+      return;
+    }
+    if (newPassword.length < 8) {
+      toast.error('New password must be at least 8 characters.');
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      // apiCall throws on a non-2xx response, so failures land in catch.
+      await apiCall('/users/me/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      toast.success('Password updated successfully.');
+    } catch (err) {
+      toast.error((err as Error).message || 'Could not update your password.');
+    } finally {
+      setIsChangingPassword(false);
+    }
   };
 
   const handleToggleNotif = (key: keyof typeof notifConfig) => {

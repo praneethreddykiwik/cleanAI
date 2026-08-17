@@ -17,7 +17,8 @@ export type OperationalState =
   | 'COMPLETED'
   | 'REVIEW_PENDING'
   | 'REVIEWED'
-  | 'CLOSED';
+  | 'CLOSED'
+  | 'CANCELLED';
 
 // Map operational states to underlying Prisma BookingStatus enum
 export const mapToPrismaStatus = (opState: OperationalState): BookingStatus => {
@@ -42,20 +43,46 @@ export const mapToPrismaStatus = (opState: OperationalState): BookingStatus => {
     case 'REVIEWED':
     case 'CLOSED':
       return BookingStatus.COMPLETED;
+    // Cancelling used to target CLOSED, which maps to COMPLETED — so a
+    // cancelled job would have been recorded as successfully finished.
+    case 'CANCELLED':
+      return BookingStatus.CANCELLED;
     default:
       return BookingStatus.PENDING;
   }
 };
 
+/**
+ * Where a booking sits in the operational flow when it has no timeline history,
+ * inferred from the persisted status it was created or last saved with.
+ */
+const deriveStateFromStatus = (status: BookingStatus): OperationalState => {
+  switch (status) {
+    case BookingStatus.PENDING:
+      return 'SEARCHING_VENDOR';
+    case BookingStatus.CONFIRMED:
+    case BookingStatus.VENDOR_ACCEPTED:
+      return 'VENDOR_ACCEPTED';
+    case BookingStatus.AGENT_ASSIGNED:
+      return 'AGENT_ASSIGNED';
+    case BookingStatus.IN_PROGRESS:
+      return 'WORK_IN_PROGRESS';
+    case BookingStatus.COMPLETED:
+      return 'COMPLETED';
+    default:
+      return 'REQUESTED';
+  }
+};
+
 const ALLOWED_TRANSITIONS: Record<OperationalState, OperationalState[]> = {
-  REQUESTED: ['AI_ANALYZING', 'SEARCHING_VENDOR'],
-  AI_ANALYZING: ['SEARCHING_VENDOR'],
-  SEARCHING_VENDOR: ['VENDOR_ACCEPTED', 'REQUESTED'],
-  VENDOR_ACCEPTED: ['AGENT_ASSIGNED'],
-  AGENT_ASSIGNED: ['TECHNICIAN_EN_ROUTE'],
-  TECHNICIAN_EN_ROUTE: ['ARRIVED'],
-  ARRIVED: ['OTP_VERIFIED'],
-  OTP_VERIFIED: ['WORK_STARTED'],
+  REQUESTED: ['AI_ANALYZING', 'SEARCHING_VENDOR', 'CANCELLED'],
+  AI_ANALYZING: ['SEARCHING_VENDOR', 'CANCELLED'],
+  SEARCHING_VENDOR: ['VENDOR_ACCEPTED', 'REQUESTED', 'CANCELLED'],
+  VENDOR_ACCEPTED: ['AGENT_ASSIGNED', 'CANCELLED'],
+  AGENT_ASSIGNED: ['TECHNICIAN_EN_ROUTE', 'CANCELLED'],
+  TECHNICIAN_EN_ROUTE: ['ARRIVED', 'CANCELLED'],
+  ARRIVED: ['OTP_VERIFIED', 'CANCELLED'],
+  OTP_VERIFIED: ['WORK_STARTED', 'CANCELLED'],
   WORK_STARTED: ['WORK_IN_PROGRESS'],
   WORK_IN_PROGRESS: ['QUALITY_CHECK'],
   QUALITY_CHECK: ['COMPLETED'],
@@ -63,6 +90,8 @@ const ALLOWED_TRANSITIONS: Record<OperationalState, OperationalState[]> = {
   REVIEW_PENDING: ['REVIEWED'],
   REVIEWED: ['CLOSED'],
   CLOSED: [],
+  // Terminal: a cancelled booking cannot re-enter the flow.
+  CANCELLED: [],
 };
 
 export class BookingStateMachine {
@@ -85,7 +114,26 @@ export class BookingStateMachine {
         orderBy: { createdAt: 'desc' },
       });
 
-      const currentState: OperationalState = (latestTimeline?.status as OperationalState) || 'REQUESTED';
+      // No booking has a timeline row until a transition succeeds, and the only
+      // writer is this method — below the validation. Defaulting to 'REQUESTED'
+      // therefore made the FIRST transition on every booking illegal: bookings
+      // are created already CONFIRMED with a vendor attached, so Assign Agent
+      // asked for REQUESTED -> AGENT_ASSIGNED and Cancel asked for
+      // REQUESTED -> CLOSED, neither of which is in the table. Both threw and
+      // surfaced as a 500. Derive the starting point from the booking's own
+      // status so existing rows work too — a creation-time seed would not fix
+      // the bookings already in the database.
+      const booking = await tx.booking.findUnique({
+        where: { id: bookingId },
+        select: { status: true },
+      });
+
+      if (!booking) {
+        throw new Error('Booking not found');
+      }
+
+      const currentState: OperationalState =
+        (latestTimeline?.status as OperationalState) || deriveStateFromStatus(booking.status);
 
       // 2. Validate transition
       if (currentState !== toState) {

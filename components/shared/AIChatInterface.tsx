@@ -22,6 +22,8 @@ interface Message {
 
 interface AIChatInterfaceProps {
   serviceName: string;
+  /** DB Service id. Required to book — a Vendor id will not resolve. */
+  serviceId?: string;
   onBookingCreated: (bookingNumber: string) => void;
   addressId?: string;
   latitude?: number;
@@ -32,6 +34,7 @@ interface AIChatInterfaceProps {
 
 export function AIChatInterface({
   serviceName,
+  serviceId,
   onBookingCreated,
   addressId,
   latitude,
@@ -393,12 +396,21 @@ export function AIChatInterface({
       return;
     }
 
+    if (!serviceId) {
+      toast.error('This service could not be identified. Please reopen it from the catalog.');
+      return;
+    }
+
     setIsLoading(true);
     try {
       const res = await apiCall('/bookings', {
         method: 'POST',
         body: JSON.stringify({
-          serviceId: vendor.vendorId, // using matched vendor's database relation
+          // POST /bookings resolves a Service by this id, then finds vendors
+          // for it. This used to send vendor.vendorId — a Vendor UUID — so the
+          // lookup always missed and every AI booking died on "Service not
+          // found". The vendor choice travels separately.
+          serviceId,
           addressId,
           scheduledDate: new Date(Date.now() + 86400000).toISOString().split('T')[0], // scheduled tomorrow
           scheduledTime: '10:00 AM - 12:00 PM',

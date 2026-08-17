@@ -643,7 +643,7 @@ const cancelBookingHandler = async (req: AuthenticatedRequest, res: Response) =>
 
     await BookingStateMachine.transitionTo({
       bookingId: id,
-      toState: 'CLOSED',
+      toState: 'CANCELLED',
       actorId: userId,
       actorRole: req.user?.role || 'CUSTOMER',
       notes: `Cancelled. Reason: ${reason}`,
