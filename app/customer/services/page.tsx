@@ -127,6 +127,63 @@ const CATEGORY_THEMES: Record<string, {
   },
 };
 
+
+const COUPON_DISCOUNT = 50;
+
+/**
+ * Single source of truth for what the customer is shown and what we charge.
+ *
+ * Every figure comes from the pricing engine's own breakdown. Previously this
+ * screen read `pricing.labourFee`, which the API does not return (it is
+ * `labourAdjustment`), so the line rendered as NaN and poisoned the total — and
+ * that same NaN was sent as the booking's totalAmount. Platform fee and GST
+ * were hardcoded to 49 and 50, so the distance and dirtiness charges the engine
+ * calculated never reached the customer.
+ *
+ * `n()` coerces anything unexpected to 0 so a missing field can never render
+ * NaN or be billed.
+ */
+function buildInvoice(prefilledAI: any, selectedService: any, couponApplied: boolean) {
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const p = prefilledAI?.pricing;
+
+  const basePrice = p ? n(p.basePrice) : n(selectedService?.basePrice);
+  const severityFee = n(p?.severityFee);
+  const labour = n(p?.labourAdjustment);
+  const area = n(p?.areaAdjustment);
+  const equipment = n(p?.equipmentCost);
+  const chemical = n(p?.chemicalCost);
+  const travelFee = n(p?.travelFee);
+  const weekend = n(p?.weekendSurcharge);
+  const night = n(p?.nightCharge);
+
+  // Flat-rate bookings have no engine breakdown, so fall back to the old
+  // fixed platform fee rather than showing zero.
+  const platformFee = p ? n(p.platformFee) : 49;
+  const discount = couponApplied ? COUPON_DISCOUNT : 0;
+
+  const subtotal =
+    basePrice + severityFee + labour + area + equipment + chemical +
+    travelFee + weekend + night + platformFee - discount;
+
+  // Use the engine's tax when present; otherwise apply the same 18% it uses.
+  const gst = p ? n(p.taxes) : Math.round(subtotal * 0.18);
+
+  return {
+    basePrice,
+    severityFee,
+    labour,
+    travelFee,
+    platformFee,
+    gst,
+    discount,
+    dirtinessLevel: p?.dirtinessLevel,
+    dirtinessLabel: p?.dirtinessLabel,
+    distanceKm: p?.distanceKm,
+    totalAmount: Math.max(0, Math.round(subtotal + gst)),
+  };
+}
+
 export default function ServicesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
@@ -264,16 +321,8 @@ export default function ServicesPage() {
       return;
     }
 
-    // Calculate invoice values
-    const base = prefilledAI ? prefilledAI.pricing.basePrice : selectedService.basePrice;
-    const severityCharge = prefilledAI ? prefilledAI.pricing.severityFee : 0;
-    const labourCharge = prefilledAI ? prefilledAI.pricing.labourFee : 0;
-    const weekendCharge = prefilledAI ? prefilledAI.pricing.weekendSurcharge : 0;
-    const couponDiscount = couponApplied ? 50 : 0;
-    const subtotal = base + severityCharge + labourCharge + weekendCharge;
-    const platform = 49;
-    const gst = 50;
-    const totalAmount = subtotal + platform + gst - couponDiscount;
+    // Invoice comes from the pricing engine's own breakdown — see buildInvoice.
+    const { totalAmount } = buildInvoice(prefilledAI, selectedService, couponApplied);
 
     setIsSubmittingBooking(true);
     try {
@@ -284,7 +333,15 @@ export default function ServicesPage() {
           addressId: addr.id,
           scheduledDate: bookingDate,
           scheduledTime: bookingTime,
-          notes: prefilledAI ? `AI Pinned: ${prefilledAI.complexity.subcategory}. Tools: ${prefilledAI.complexity.recommendedTools.join(', ')}. ${bookingNotes}` : bookingNotes,
+          // The API field is `recommendedEquipment`; `recommendedTools` never
+          // existed on the response, so this threw "Cannot read properties of
+          // undefined (reading 'join')" the moment an AI-pinned booking was
+          // confirmed. Guarded so a missing list degrades instead of crashing.
+          notes: prefilledAI
+            ? `AI Pinned: ${prefilledAI.complexity?.subcategory ?? 'Job'}. ` +
+              `Tools: ${(prefilledAI.complexity?.recommendedEquipment ?? []).join(', ') || 'Standard kit'}. ` +
+              `${bookingNotes}`
+            : bookingNotes,
           totalAmount,
           latitude: addr.latitude || 12.9716,
           longitude: addr.longitude || 77.5946,
@@ -909,54 +966,71 @@ export default function ServicesPage() {
                         </div>
                       </div>
 
-                      {/* Invoice breakdown */}
+                      {/* Invoice breakdown — every figure from buildInvoice */}
                       <div className="p-4 rounded-xl bg-muted/20 border border-border/30 space-y-2 mt-4 text-[11px]">
                         <span className="text-[9px] uppercase font-bold text-muted-foreground/60 block border-b border-border/20 pb-1">Price Details</span>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Base Price</span>
-                          <span className="text-foreground">
-                            {formatCurrency(prefilledAI ? prefilledAI.pricing.basePrice : selectedService.basePrice)}
-                          </span>
-                        </div>
-                        {prefilledAI && (
-                          <>
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">AI Severity Surcharge</span>
-                              <span className="text-foreground">{formatCurrency(prefilledAI.pricing.severityFee)}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">AI Labor Hourly Multiplier</span>
-                              <span className="text-foreground">{formatCurrency(prefilledAI.pricing.labourFee)}</span>
-                            </div>
-                          </>
-                        )}
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Platform Fee</span>
-                          <span className="text-foreground">{formatCurrency(49)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Taxes & GST</span>
-                          <span className="text-foreground">{formatCurrency(50)}</span>
-                        </div>
-                        {couponApplied && (
-                          <div className="flex justify-between text-green-600 dark:text-green-400">
-                            <span>Promo Discount</span>
-                            <span>- {formatCurrency(50)}</span>
-                          </div>
-                        )}
-                        <div className="h-px bg-border/20 my-1" />
-                        <div className="flex justify-between font-bold text-foreground text-xs">
-                          <span>Total Pay</span>
-                          <span>
-                            {formatCurrency(
-                              (prefilledAI ? prefilledAI.pricing.basePrice : selectedService.basePrice) +
-                              (prefilledAI ? prefilledAI.pricing.severityFee : 0) +
-                              (prefilledAI ? prefilledAI.pricing.labourFee : 0) +
-                              (prefilledAI ? prefilledAI.pricing.weekendSurcharge : 0) +
-                              49 + 50 - (couponApplied ? 50 : 0)
-                            )}
-                          </span>
-                        </div>
+                        {(() => {
+                          const inv = buildInvoice(prefilledAI, selectedService, couponApplied);
+                          return (
+                            <>
+                              {inv.dirtinessLevel ? (
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">
+                                    Dirtiness Level
+                                  </span>
+                                  <span className="text-amber-500">
+                                    {'★'.repeat(inv.dirtinessLevel)}
+                                    <span className="text-muted-foreground/50">{'☆'.repeat(5 - inv.dirtinessLevel)}</span>
+                                    <span className="text-muted-foreground ml-1">{inv.dirtinessLabel}</span>
+                                  </span>
+                                </div>
+                              ) : null}
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Base Price</span>
+                                <span className="text-foreground">{formatCurrency(inv.basePrice)}</span>
+                              </div>
+                              {inv.severityFee > 0 && (
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">AI Severity Surcharge</span>
+                                  <span className="text-foreground">{formatCurrency(inv.severityFee)}</span>
+                                </div>
+                              )}
+                              {inv.labour > 0 && (
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Labour Adjustment</span>
+                                  <span className="text-foreground">{formatCurrency(inv.labour)}</span>
+                                </div>
+                              )}
+                              {inv.travelFee > 0 && (
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">
+                                    Travel{inv.distanceKm ? ` (${Number(inv.distanceKm).toFixed(1)} km)` : ''}
+                                  </span>
+                                  <span className="text-foreground">{formatCurrency(inv.travelFee)}</span>
+                                </div>
+                              )}
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Platform Fee</span>
+                                <span className="text-foreground">{formatCurrency(inv.platformFee)}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Taxes &amp; GST</span>
+                                <span className="text-foreground">{formatCurrency(inv.gst)}</span>
+                              </div>
+                              {inv.discount > 0 && (
+                                <div className="flex justify-between text-green-600 dark:text-green-400">
+                                  <span>Promo Discount</span>
+                                  <span>- {formatCurrency(inv.discount)}</span>
+                                </div>
+                              )}
+                              <div className="h-px bg-border/20 my-1" />
+                              <div className="flex justify-between font-bold text-foreground text-xs">
+                                <span>Total Pay</span>
+                                <span>{formatCurrency(inv.totalAmount)}</span>
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
 
