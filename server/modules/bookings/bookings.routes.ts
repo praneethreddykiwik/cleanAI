@@ -4,6 +4,7 @@ import { prisma } from '../../database';
 import { BookingStatus, PaymentStatus } from '@prisma/client';
 import { createNotification } from '../notifications/notification.service';
 import { BookingStateMachine } from './booking.state.machine';
+import { SAFE_USER_FIELDS } from '../../utils/safeUser';
 
 export const bookingRoutes = Router();
 
@@ -47,7 +48,7 @@ bookingRoutes.get('/', authMiddleware as any, async (req: AuthenticatedRequest, 
           service: true,
           address: true,
           vendor: true,
-          agent: { include: { user: true } },
+          agent: { include: { user: { select: SAFE_USER_FIELDS } } },
         },
         orderBy: { createdAt: 'desc' },
       });
@@ -66,8 +67,8 @@ bookingRoutes.get('/', authMiddleware as any, async (req: AuthenticatedRequest, 
         include: {
           service: true,
           address: true,
-          customer: { include: { user: true } },
-          agent: { include: { user: true } },
+          customer: { include: { user: { select: SAFE_USER_FIELDS } } },
+          agent: { include: { user: { select: SAFE_USER_FIELDS } } },
         },
         orderBy: { createdAt: 'desc' },
       });
@@ -81,7 +82,7 @@ bookingRoutes.get('/', authMiddleware as any, async (req: AuthenticatedRequest, 
         include: {
           service: true,
           address: true,
-          customer: { include: { user: true } },
+          customer: { include: { user: { select: SAFE_USER_FIELDS } } },
         },
         orderBy: { createdAt: 'desc' },
       });
@@ -90,9 +91,9 @@ bookingRoutes.get('/', authMiddleware as any, async (req: AuthenticatedRequest, 
         include: {
           service: true,
           address: true,
-          customer: { include: { user: true } },
+          customer: { include: { user: { select: SAFE_USER_FIELDS } } },
           vendor: true,
-          agent: { include: { user: true } },
+          agent: { include: { user: { select: SAFE_USER_FIELDS } } },
         },
         orderBy: { createdAt: 'desc' },
       });
@@ -119,9 +120,9 @@ bookingRoutes.get('/:id', authMiddleware as any, async (req: AuthenticatedReques
       include: {
         service: true,
         address: true,
-        customer: { include: { user: true } },
-        vendor: { include: { user: true } },
-        agent: { include: { user: true } },
+        customer: { include: { user: { select: SAFE_USER_FIELDS } } },
+        vendor: { include: { user: { select: SAFE_USER_FIELDS } } },
+        agent: { include: { user: { select: SAFE_USER_FIELDS } } },
         statusHistory: { orderBy: { createdAt: 'desc' } },
       },
     });
@@ -264,7 +265,7 @@ bookingRoutes.post('/', authMiddleware as any, async (req: AuthenticatedRequest,
         include: {
           service: true,
           vendor: true,
-          agent: { include: { user: true } },
+          agent: { include: { user: { select: SAFE_USER_FIELDS } } },
         },
       });
 
@@ -322,7 +323,7 @@ const acceptBookingHandler = async (req: AuthenticatedRequest, res: Response) =>
 
     const booking = await prisma.booking.findUnique({
       where: { id },
-      include: { customer: { include: { user: true } } },
+      include: { customer: { include: { user: { select: SAFE_USER_FIELDS } } } },
     });
 
     if (!booking) {
@@ -403,7 +404,7 @@ const rejectBookingHandler = async (req: AuthenticatedRequest, res: Response) =>
 
     const booking = await prisma.booking.findUnique({
       where: { id },
-      include: { customer: { include: { user: true } } },
+      include: { customer: { include: { user: { select: SAFE_USER_FIELDS } } } },
     });
 
     if (!booking) {
@@ -469,7 +470,7 @@ const assignAgentHandler = async (req: AuthenticatedRequest, res: Response) => {
 
     const agent = await prisma.agent.findFirst({
       where: { id: agentId, vendorId: vendor.id },
-      include: { user: true },
+      include: { user: { select: SAFE_USER_FIELDS } },
     });
 
     if (!agent) {
@@ -478,7 +479,7 @@ const assignAgentHandler = async (req: AuthenticatedRequest, res: Response) => {
 
     const booking = await prisma.booking.findUnique({
       where: { id },
-      include: { customer: { include: { user: true } } },
+      include: { customer: { include: { user: { select: SAFE_USER_FIELDS } } } },
     });
 
     if (!booking) {
@@ -554,8 +555,8 @@ const cancelBookingHandler = async (req: AuthenticatedRequest, res: Response) =>
     const booking = await prisma.booking.findUnique({
       where: { id },
       include: {
-        customer: { include: { user: true } },
-        vendor: { include: { user: true } },
+        customer: { include: { user: { select: SAFE_USER_FIELDS } } },
+        vendor: { include: { user: { select: SAFE_USER_FIELDS } } },
       },
     });
 

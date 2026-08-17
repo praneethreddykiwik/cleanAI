@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { authMiddleware, authorizeRoles, AuthenticatedRequest } from '../../middleware/auth';
 import { prisma } from '../../database';
+import { SAFE_USER_FIELDS } from '../../utils/safeUser';
 
 export const vendorRoutes = Router();
 
@@ -14,7 +15,7 @@ vendorRoutes.get('/profile', authMiddleware as any, authorizeRoles('VENDOR', 'AD
 
     const vendor = await prisma.vendor.findUnique({
       where: { userId },
-      include: { user: true },
+      include: { user: { select: SAFE_USER_FIELDS } },
     });
 
     if (!vendor) {
@@ -282,7 +283,7 @@ vendorRoutes.get('/dashboard-summary', authMiddleware as any, authorizeRoles('VE
       include: {
         service: true,
         address: true,
-        customer: { include: { user: true } },
+        customer: { include: { user: { select: SAFE_USER_FIELDS } } },
       },
       orderBy: { createdAt: 'desc' },
       take: 5,
@@ -305,8 +306,8 @@ vendorRoutes.get('/dashboard-summary', authMiddleware as any, authorizeRoles('VE
       include: {
         service: true,
         address: true,
-        customer: { include: { user: true } },
-        agent: { include: { user: true } },
+        customer: { include: { user: { select: SAFE_USER_FIELDS } } },
+        agent: { include: { user: { select: SAFE_USER_FIELDS } } },
       },
       orderBy: { scheduledTime: 'asc' },
     });
@@ -340,7 +341,7 @@ vendorRoutes.get('/dashboard-summary', authMiddleware as any, authorizeRoles('VE
     // 5. Total agents list
     const agentsList = await prisma.agent.findMany({
       where: { vendorId: vendor.id },
-      include: { user: true },
+      include: { user: { select: SAFE_USER_FIELDS } },
     });
 
     res.status(200).json({

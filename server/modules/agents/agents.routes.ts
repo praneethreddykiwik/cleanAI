@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { authMiddleware, authorizeRoles, AuthenticatedRequest } from '../../middleware/auth';
 import { prisma } from '../../database';
 import bcrypt from 'bcryptjs';
+import { SAFE_USER_FIELDS } from '../../utils/safeUser';
 
 export const agentRoutes = Router();
 
@@ -16,7 +17,7 @@ agentRoutes.get('/', authMiddleware as any, authorizeRoles('VENDOR', 'ADMIN') as
     if (req.user?.role === 'ADMIN') {
       const allAgents = await prisma.agent.findMany({
         include: {
-          user: true,
+          user: { select: SAFE_USER_FIELDS },
           vendor: true,
         },
       });
@@ -31,7 +32,7 @@ agentRoutes.get('/', authMiddleware as any, authorizeRoles('VENDOR', 'ADMIN') as
     const agents = await prisma.agent.findMany({
       where: { vendorId: vendor.id },
       include: {
-        user: true,
+        user: { select: SAFE_USER_FIELDS },
       },
     });
 
@@ -112,7 +113,7 @@ agentRoutes.post('/', authMiddleware as any, authorizeRoles('VENDOR') as any, as
           skills,
         },
         include: {
-          user: true,
+          user: { select: SAFE_USER_FIELDS },
         },
       });
 

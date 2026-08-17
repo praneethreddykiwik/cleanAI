@@ -3,6 +3,7 @@ import { authMiddleware, authorizeRoles, AuthenticatedRequest } from '../../midd
 import { prisma } from '../../database';
 import { createNotification } from '../notifications/notification.service';
 import { VendorStatus } from '@prisma/client';
+import { SAFE_USER_FIELDS } from '../../utils/safeUser';
 
 export const adminRoutes = Router();
 
@@ -203,7 +204,7 @@ adminRoutes.post('/settings', authMiddleware as any, authorizeRoles('ADMIN') as 
 adminRoutes.get('/vendors', authMiddleware as any, authorizeRoles('ADMIN') as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const vendors = await prisma.vendor.findMany({
-      include: { user: true, documents: true },
+      include: { user: { select: SAFE_USER_FIELDS }, documents: true },
     });
     res.status(200).json({ success: true, data: vendors });
   } catch (error: any) {
@@ -218,7 +219,7 @@ adminRoutes.patch('/vendors/:id/approve', authMiddleware as any, authorizeRoles(
 
     const vendor = await prisma.vendor.findUnique({
       where: { id },
-      include: { user: true },
+      include: { user: { select: SAFE_USER_FIELDS } },
     });
 
     if (!vendor) {
@@ -259,7 +260,7 @@ adminRoutes.patch('/vendors/:id/reject', authMiddleware as any, authorizeRoles('
 
     const vendor = await prisma.vendor.findUnique({
       where: { id },
-      include: { user: true },
+      include: { user: { select: SAFE_USER_FIELDS } },
     });
 
     if (!vendor) {
@@ -332,7 +333,27 @@ adminRoutes.patch('/users/:id/restore', authMiddleware as any, authorizeRoles('A
 // List all users for admin directory dashboard
 adminRoutes.get('/users', authMiddleware as any, authorizeRoles('ADMIN') as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    // Select explicitly. An unqualified findMany returned every column, so this
+    // response carried each user's bcrypt passwordHash, password-reset token and
+    // phone OTP. Credential material should never leave the database — not even
+    // for an admin, since one leaked session would expose every hash for
+    // offline cracking.
     const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        avatar: true,
+        isActive: true,
+        isEmailVerified: true,
+        isPhoneVerified: true,
+        lastLoginAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
       orderBy: { createdAt: 'desc' }
     });
     res.status(200).json({ success: true, data: users });
@@ -346,7 +367,7 @@ adminRoutes.get('/support-tickets', authMiddleware as any, authorizeRoles('ADMIN
   try {
     const tickets = await prisma.supportTicket.findMany({
       include: {
-        customer: { include: { user: true } },
+        customer: { include: { user: { select: SAFE_USER_FIELDS } } },
         booking: { select: { bookingNumber: true, id: true } },
       },
       orderBy: { createdAt: 'desc' },
