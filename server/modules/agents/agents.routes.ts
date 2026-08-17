@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { authMiddleware, authorizeRoles, AuthenticatedRequest } from '../../middleware/auth';
 import { prisma } from '../../database';
 import bcrypt from 'bcryptjs';
+import { randomUUID } from 'node:crypto';
 import { SAFE_USER_FIELDS } from '../../utils/safeUser';
 
 export const agentRoutes = Router();
@@ -71,12 +72,38 @@ agentRoutes.post('/', authMiddleware as any, authorizeRoles('VENDOR') as any, as
 
     const { email, phone, firstName, lastName, password, skills = [] } = req.body;
 
-    if (!email || !phone || !firstName || !lastName || !password) {
-      return res.status(400).json({ success: false, message: 'Missing required registration fields (email, phone, firstName, lastName, password)' });
+    if (!email || !phone || !firstName || !lastName) {
+      return res.status(400).json({ success: false, message: 'Missing required fields (email, phone, firstName, lastName)' });
     }
 
-    if (typeof password !== 'string' || password.length < 8) {
+    if (
+      typeof email !== 'string' ||
+      typeof phone !== 'string' ||
+      typeof firstName !== 'string' ||
+      typeof lastName !== 'string'
+    ) {
+      return res.status(400).json({ success: false, message: 'All agent fields must be text values' });
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid email address' });
+    }
+
+    // A vendor registers staff on their behalf, so they should not have to
+    // invent a password for someone else. When none is supplied we generate a
+    // strong temporary one and return it ONCE so the vendor can pass it on.
+    // Requiring it here is what made this endpoint reject every submission from
+    // the Register New Agent form, which has no password field.
+    let temporaryPassword: string | null = null;
+    let effectivePassword: string;
+
+    if (password === undefined || password === null || password === '') {
+      temporaryPassword = `CA-${randomUUID().replace(/-/g, '').slice(0, 10)}`;
+      effectivePassword = temporaryPassword;
+    } else if (typeof password !== 'string' || password.length < 8) {
       return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
+    } else {
+      effectivePassword = password;
     }
 
     // Check if user exists
@@ -90,7 +117,7 @@ agentRoutes.post('/', authMiddleware as any, authorizeRoles('VENDOR') as any, as
       return res.status(400).json({ success: false, message: 'Email or phone already registered' });
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(effectivePassword, 10);
 
     const newAgent = await prisma.$transaction(async (tx) => {
       const createdUser = await tx.user.create({
@@ -122,7 +149,9 @@ agentRoutes.post('/', authMiddleware as any, authorizeRoles('VENDOR') as any, as
 
     res.status(201).json({
       success: true,
-      message: 'New agent registered successfully.',
+      message: temporaryPassword
+        ? 'Agent registered. Share the temporary password below — it is shown only once.'
+        : 'New agent registered successfully.',
       data: {
         id: newAgent.id,
         name: `${newAgent.user.firstName} ${newAgent.user.lastName}`,
@@ -131,6 +160,9 @@ agentRoutes.post('/', authMiddleware as any, authorizeRoles('VENDOR') as any, as
         rating: newAgent.rating,
         status: newAgent.status,
         skills: newAgent.skills,
+        // Only present when we generated it. Never retrievable afterwards —
+        // only the bcrypt hash is stored.
+        temporaryPassword,
       },
     });
   } catch (error: any) {

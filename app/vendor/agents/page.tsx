@@ -55,13 +55,24 @@ export default function VendorAgentsPage() {
       if (!res.success) throw new Error(res.message || 'Failed to add agent');
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['vendor-agents'] });
       setShowAddModal(false);
       setNewAgentName('');
       setNewAgentPhone('');
       setNewAgentEmail('');
-      toast.success('Agent registered. Verification pending.');
+
+      // The server generates a temporary password when the form does not
+      // collect one, and returns it exactly once — only the hash is stored.
+      // Keep it on screen until dismissed so it cannot be missed.
+      if (data?.temporaryPassword) {
+        toast.success(
+          `Agent registered. Temporary password: ${data.temporaryPassword} — share it now, it will not be shown again.`,
+          { duration: Infinity, closeButton: true }
+        );
+      } else {
+        toast.success('Agent registered. Verification pending.');
+      }
     },
     onError: (err: any) => toast.error(err.message || 'Failed to register agent.'),
   });
