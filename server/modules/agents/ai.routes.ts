@@ -55,7 +55,10 @@ aiRoutes.post('/analyze-job', authMiddleware as any, async (req: AuthenticatedRe
       isWeekend,
       city,
       travelDistanceKm,
-      Boolean(isNightBooking)
+      Boolean(isNightBooking),
+      // Optional: quote against one vendor's own tier rates instead of the
+      // platform defaults, so a customer comparing vendors sees real prices.
+      typeof req.body?.vendorId === 'string' ? req.body.vendorId : undefined
     );
 
     res.status(200).json({

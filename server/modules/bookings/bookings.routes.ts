@@ -200,26 +200,95 @@ bookingRoutes.post('/', authMiddleware as any, async (req: AuthenticatedRequest,
 
     // 2. Vendor Exists and Active validation
     console.log(`[Vendor Lookup] Finding approved vendor mappings for Service: "${service.name}"`);
-    const vendorService = await prisma.vendorService.findFirst({
-      where: { serviceId: service.id, isActive: true },
-      include: { vendor: true },
+    // Consider EVERY approved vendor offering this service, not just the first
+    // one found. The previous findFirst() picked a vendor blindly and then
+    // failed with "No available agents" whenever that particular vendor had
+    // none free — even while other vendors were sitting idle and able to take
+    // the job.
+    const candidateVendorServices = await prisma.vendorService.findMany({
+      where: {
+        serviceId: service.id,
+        isActive: true,
+        vendor: { status: 'APPROVED' },
+      },
+      include: {
+        vendor: {
+          include: {
+            // Location comes from the agent, not the vendor — Vendor has no
+            // coordinates, only serviceAreas.
+            agents: { where: { status: 'AVAILABLE' }, include: { location: true } },
+            _count: { select: { agents: true } },
+          },
+        },
+      },
     });
-    if (!vendorService || !vendorService.vendor || vendorService.vendor.status !== 'APPROVED') {
-      console.warn(`[Vendor Lookup] No active approved vendor mapping found for service "${service.name}"`);
+
+    if (candidateVendorServices.length === 0) {
+      console.warn(`[Vendor Lookup] No approved vendor offers service "${service.name}"`);
       return res.status(400).json({ success: false, message: 'Vendor unavailable' });
     }
-    const vendor = vendorService.vendor;
-    console.log(`[Vendor Lookup] Matched Vendor: "${vendor.businessName}"`);
 
-    // 3. Available Agent validation
-    console.log(`[Agent Matching] Looking for AVAILABLE agents under Vendor: "${vendor.businessName}"`);
-    const agent = await prisma.agent.findFirst({
-      where: { vendorId: vendor.id, status: 'AVAILABLE' },
-    });
-    if (!agent) {
-      console.warn(`[Agent Matching] No available agents registered for vendor "${vendor.businessName}"`);
-      return res.status(400).json({ success: false, message: 'No available agents' });
+    // Only vendors with a free agent can actually serve the booking.
+    const staffedVendors = candidateVendorServices.filter((vs) => vs.vendor.agents.length > 0);
+
+    if (staffedVendors.length === 0) {
+      const totalAgents = candidateVendorServices.reduce((sum, vs) => sum + vs.vendor._count.agents, 0);
+      console.warn(
+        `[Agent Matching] ${candidateVendorServices.length} vendor(s) offer "${service.name}" but none has a free agent ` +
+        `(${totalAgents} agent(s) total, all busy or offline)`
+      );
+      return res.status(409).json({
+        success: false,
+        message:
+          totalAgents === 0
+            ? 'No agents are registered for this service yet. Please try another service or contact support.'
+            : 'All agents for this service are currently busy. Please pick a different time slot.',
+      });
     }
+
+    // Dispatch to the closest FREE AGENT. Agents carry the live coordinates
+    // (AgentLocation); the vendor record only has serviceAreas. Agents with no
+    // reported location rank last rather than being excluded, so a booking
+    // still succeeds when GPS has never been sent.
+    const custLat = typeof latitude === 'number' ? latitude : null;
+    const custLng = typeof longitude === 'number' ? longitude : null;
+
+    const distanceKmBetween = (lat: number, lng: number) => {
+      if (custLat === null || custLng === null) return Number.POSITIVE_INFINITY;
+      // Equirectangular approximation — accurate enough for ranking in a city.
+      const R = 6371;
+      const dLat = ((lat - custLat) * Math.PI) / 180;
+      const dLng = ((lng - custLng) * Math.PI) / 180;
+      const meanLat = ((lat + custLat) / 2) * (Math.PI / 180);
+      const x = dLng * Math.cos(meanLat);
+      return Math.sqrt(dLat * dLat + x * x) * R;
+    };
+
+    const ranked = staffedVendors
+      .flatMap((vs) =>
+        vs.vendor.agents.map((a) => ({
+          vs,
+          agent: a,
+          distanceKm: a.location
+            ? distanceKmBetween(a.location.latitude, a.location.longitude)
+            : Number.POSITIVE_INFINITY,
+        }))
+      )
+      .sort((a, b) => a.distanceKm - b.distanceKm);
+
+    const best = ranked[0];
+    const vendorService = best.vs;
+    const vendor = vendorService.vendor;
+    const agent = best.agent;
+    const matchedDistanceKm = Number.isFinite(best.distanceKm) ? best.distanceKm : null;
+
+    const freeAgentCount = ranked.length;
+    console.log(
+      `[Dispatch] "${vendor.businessName}" chosen from ${staffedVendors.length}/${candidateVendorServices.length} ` +
+      `staffed vendors; ${freeAgentCount} free agent(s) considered` +
+      `${matchedDistanceKm !== null ? `; nearest ${matchedDistanceKm.toFixed(1)} km` : '; no GPS data'} ` +
+      `-> Agent ${agent.id}`
+    );
     console.log(`[Agent Matching] Found Agent ID: ${agent.id}`);
 
     const bookingNumber = `CAI-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;

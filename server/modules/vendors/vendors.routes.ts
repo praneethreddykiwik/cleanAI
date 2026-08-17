@@ -476,3 +476,166 @@ vendorRoutes.get('/agents', authMiddleware as any, authorizeRoles('VENDOR', 'ADM
     res.status(500).json({ success: false, message: error.message || 'Failed to fetch agents' });
   }
 });
+
+// ============================================================================
+// Vendor dirtiness-tier pricing
+// ----------------------------------------------------------------------------
+// The vision agent rates each job 1–5 stars. A vendor's tier price for that
+// level is what the customer is quoted, so vendors control their own rates
+// while the AI still decides which level applies. Falls back to the
+// platform-wide tier, then the vendor's flat rate, when a level is unset.
+// ============================================================================
+
+const VENDOR_TIER_LABELS: Record<number, string> = {
+  1: 'Light',
+  2: 'Mild',
+  3: 'Moderate',
+  4: 'Heavy',
+  5: 'Extreme',
+};
+
+const VENDOR_TIER_MULTIPLIERS: Record<number, number> = {
+  1: 0.6,
+  2: 0.8,
+  3: 1.0,
+  4: 1.35,
+  5: 1.75,
+};
+
+/** This vendor's services with their five tier prices, seeding defaults once. */
+vendorRoutes.get('/pricing-tiers', authMiddleware as any, authorizeRoles('VENDOR') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const vendor = await prisma.vendor.findUnique({ where: { userId: req.user?.id } });
+    if (!vendor) {
+      return res.status(404).json({ success: false, message: 'Vendor profile not found' });
+    }
+
+    const load = () =>
+      prisma.vendorService.findMany({
+        where: { vendorId: vendor.id },
+        include: {
+          service: { select: { id: true, name: true, category: true, icon: true, basePrice: true } },
+          pricingTiers: { orderBy: { level: 'asc' } },
+        },
+        orderBy: { service: { sortOrder: 'asc' } },
+      });
+
+    let vendorServices = await load();
+
+    // Seed any service the vendor has not configured yet, based on their own
+    // flat rate, so the screen always shows five editable levels.
+    const needsSeed = vendorServices.filter((vs) => vs.pricingTiers.length === 0);
+    if (needsSeed.length > 0) {
+      await prisma.vendorServicePricingTier.createMany({
+        data: needsSeed.flatMap((vs) =>
+          [1, 2, 3, 4, 5].map((level) => ({
+            vendorServiceId: vs.id,
+            level,
+            label: VENDOR_TIER_LABELS[level],
+            price: Math.round((vs.price || vs.service.basePrice || 499) * VENDOR_TIER_MULTIPLIERS[level]),
+          }))
+        ),
+        skipDuplicates: true,
+      });
+      vendorServices = await load();
+    }
+
+    res.status(200).json({ success: true, data: vendorServices });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to load pricing tiers' });
+  }
+});
+
+/** Update this vendor's five tier prices for one service. */
+vendorRoutes.put('/pricing-tiers/:serviceId', authMiddleware as any, authorizeRoles('VENDOR') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const vendor = await prisma.vendor.findUnique({ where: { userId: req.user?.id } });
+    if (!vendor) {
+      return res.status(404).json({ success: false, message: 'Vendor profile not found' });
+    }
+
+    const { serviceId } = req.params;
+    const { tiers } = req.body as { tiers?: Array<{ level: number; price: number; label?: string }> };
+
+    if (!Array.isArray(tiers) || tiers.length === 0) {
+      return res.status(400).json({ success: false, message: 'tiers must be a non-empty array' });
+    }
+
+    for (const t of tiers) {
+      const level = Number(t.level);
+      const price = Number(t.price);
+      if (!Number.isInteger(level) || level < 1 || level > 5) {
+        return res.status(400).json({ success: false, message: 'Each tier level must be an integer between 1 and 5' });
+      }
+      if (!Number.isFinite(price) || price < 0) {
+        return res.status(400).json({ success: false, message: 'Each tier price must be zero or greater' });
+      }
+    }
+
+    // Scoped to this vendor's own row — a vendor cannot touch another's rates.
+    const vendorService = await prisma.vendorService.findUnique({
+      where: { vendorId_serviceId: { vendorId: vendor.id, serviceId } },
+    });
+    if (!vendorService) {
+      return res.status(404).json({ success: false, message: 'You do not offer this service' });
+    }
+
+    await prisma.$transaction(
+      tiers.map((t) =>
+        prisma.vendorServicePricingTier.upsert({
+          where: { vendorServiceId_level: { vendorServiceId: vendorService.id, level: Number(t.level) } },
+          update: { price: Number(t.price), label: t.label || VENDOR_TIER_LABELS[Number(t.level)] },
+          create: {
+            vendorServiceId: vendorService.id,
+            level: Number(t.level),
+            price: Number(t.price),
+            label: t.label || VENDOR_TIER_LABELS[Number(t.level)],
+          },
+        })
+      )
+    );
+
+    const updated = await prisma.vendorServicePricingTier.findMany({
+      where: { vendorServiceId: vendorService.id },
+      orderBy: { level: 'asc' },
+    });
+
+    res.status(200).json({ success: true, message: 'Pricing tiers updated', data: updated });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to update pricing tiers' });
+  }
+});
+
+/** Live capacity for this vendor: how many agents are free vs busy right now. */
+vendorRoutes.get('/capacity', authMiddleware as any, authorizeRoles('VENDOR') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const vendor = await prisma.vendor.findUnique({ where: { userId: req.user?.id } });
+    if (!vendor) {
+      return res.status(404).json({ success: false, message: 'Vendor profile not found' });
+    }
+
+    const grouped = await prisma.agent.groupBy({
+      by: ['status'],
+      where: { vendorId: vendor.id },
+      _count: { _all: true },
+    });
+
+    const counts = { AVAILABLE: 0, BUSY: 0, OFFLINE: 0 };
+    grouped.forEach((g) => {
+      counts[g.status as keyof typeof counts] = g._count._all;
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        ...counts,
+        total: counts.AVAILABLE + counts.BUSY + counts.OFFLINE,
+        // Bookings are only routed to vendors with a free agent, so this is
+        // the difference between receiving jobs and being skipped.
+        acceptingJobs: counts.AVAILABLE > 0,
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to load capacity' });
+  }
+});

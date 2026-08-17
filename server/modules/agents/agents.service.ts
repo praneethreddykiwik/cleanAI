@@ -36,8 +36,10 @@ export interface PriceEstimationBreakdown {
   /** 1–5 star dirtiness rating from the vision agent, which selects the tier. */
   dirtinessLevel?: number;
   dirtinessLabel?: string;
-  /** The admin-configured tier price used, or null when none is set yet. */
+  /** The tier price used, or null when none is configured yet. */
   tierPriceApplied?: number | null;
+  /** Where that price came from: VENDOR, VENDOR_FLAT, PLATFORM or BASE_PRICE. */
+  tierSource?: string;
   distanceKm?: number;
 }
 
@@ -637,7 +639,9 @@ Inferred service category hint (override if your analysis disagrees): "${inferre
     isWeekend: boolean = false,
     city: string = 'Bengaluru',
     distanceKm: number | undefined = undefined,
-    isNightBooking: boolean = false
+    isNightBooking: boolean = false,
+    /** When set, this vendor's own tier rates take precedence over platform ones. */
+    vendorId?: string
   ): Promise<PriceEstimationBreakdown> {
     const startTime = process.hrtime.bigint();
     const cleanNum = (val: any, defaultVal = 0): number => {
@@ -691,12 +695,40 @@ Inferred service category hint (override if your analysis disagrees): "${inferre
     // 1-star one. Admins edit these in the dashboard. Services with no tiers
     // configured fall back to the flat basePrice, so nothing breaks before an
     // admin fills them in.
-    let pricingTier: { level: number; label: string; price: number } | null = null;
+    // Resolution order: the chosen vendor's own tier, then the platform tier,
+    // then the flat base price. A vendor's rates therefore drive the quote
+    // whenever one has been matched, while browsing without a vendor still
+    // shows the platform's reference price.
+    let pricingTier: { level: number; label: string; price: number; source: string } | null = null;
     if (serviceRecord) {
-      const tier = await prisma.servicePricingTier.findUnique({
-        where: { serviceId_level: { serviceId: serviceRecord.id, level: wciCalc.starRating } },
-      });
-      if (tier) pricingTier = { level: tier.level, label: tier.label, price: tier.price };
+      if (vendorId) {
+        const vendorService = await prisma.vendorService.findUnique({
+          where: { vendorId_serviceId: { vendorId, serviceId: serviceRecord.id } },
+          include: {
+            pricingTiers: { where: { level: wciCalc.starRating }, take: 1 },
+          },
+        });
+        const vTier = vendorService?.pricingTiers[0];
+        if (vTier) {
+          pricingTier = { level: vTier.level, label: vTier.label, price: vTier.price, source: 'VENDOR' };
+        } else if (vendorService) {
+          pricingTier = {
+            level: wciCalc.starRating,
+            label: wciCalc.severityLabel,
+            price: vendorService.price,
+            source: 'VENDOR_FLAT',
+          };
+        }
+      }
+
+      if (!pricingTier) {
+        const tier = await prisma.servicePricingTier.findUnique({
+          where: { serviceId_level: { serviceId: serviceRecord.id, level: wciCalc.starRating } },
+        });
+        if (tier) {
+          pricingTier = { level: tier.level, label: tier.label, price: tier.price, source: 'PLATFORM' };
+        }
+      }
     }
 
     const basePrice = pricingTier
@@ -896,6 +928,7 @@ Inferred service category hint (override if your analysis disagrees): "${inferre
       dirtinessLevel: wciCalc.starRating,
       dirtinessLabel: wciCalc.severityLabel,
       tierPriceApplied: pricingTier?.price ?? null,
+      tierSource: pricingTier?.source ?? 'BASE_PRICE',
       distanceKm: effectiveDistanceKm,
     };
   }

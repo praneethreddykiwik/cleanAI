@@ -210,19 +210,39 @@ model ServicePricingTier {
 }
 
 model VendorService {
-  id        String   @id @default(uuid())
-  vendorId  String
-  serviceId String
-  price     Float
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  service   Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
-  vendor    Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  id           String   @id @default(uuid())
+  vendorId     String
+  serviceId    String
+  price        Float
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  service      Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  vendor       Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  pricingTiers VendorServicePricingTier[]
 
   @@unique([vendorId, serviceId])
   @@index([vendorId])
   @@map("vendor_services")
+}
+
+/// A vendor's own price for each AI dirtiness level (1–5 stars).
+/// Takes precedence over the platform-wide ServicePricingTier, so each vendor
+/// can charge what their capacity and market justify while the AI still drives
+/// which level applies. Falls back to the platform tier when unset.
+model VendorServicePricingTier {
+  id              String        @id @default(uuid())
+  vendorServiceId String
+  level           Int // 1 = lightest .. 5 = filthiest
+  label           String
+  price           Float
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  vendorService   VendorService @relation(fields: [vendorServiceId], references: [id], onDelete: Cascade)
+
+  @@unique([vendorServiceId, level])
+  @@index([vendorServiceId])
+  @@map("vendor_service_pricing_tiers")
 }
 
 model Booking {

@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiCall } from '@/lib/api';
 import { PageSkeleton } from '@/components/shared/Skeletons';
+import { VendorTierPricing } from '@/components/vendor/VendorTierPricing';
 
 export default function VendorPricingPage() {
   const queryClient = useQueryClient();
@@ -191,6 +192,9 @@ export default function VendorPricingPage() {
             </div>
           </div>
         )}
+
+        <div className="pt-2 border-t border-border/40" />
+        <VendorTierPricing />
       </motion.div>
     </DashboardLayout>
   );
